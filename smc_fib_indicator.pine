@@ -59,18 +59,23 @@ var float prevHigh = na
 var float prevLow = na
 var float currentHigh = na
 var float currentLow = na
-var bool uptrend = na
-var bool downtrend = na
+var bool uptrend = false
+var bool downtrend = false
 var string structure = ""
 
 // Initialize trend on first valid swing
-if na(uptrend) and (not na(lastSwingHigh) or not na(lastSwingLow))
-    if not na(lastSwingHigh) and not na(lastSwingLow)
-        uptrend := lastSwingHigh > lastSwingLow ? false : true
-    else if not na(lastSwingHigh)
-        uptrend := false
-    else
-        uptrend := true
+if na(lastSwingHigh) and na(lastSwingLow)
+    uptrend := false
+    downtrend := false
+else if not na(lastSwingHigh) and not na(lastSwingLow)
+    uptrend := lastSwingHigh > lastSwingLow ? false : true
+    downtrend := !uptrend
+else if not na(lastSwingHigh)
+    uptrend := false
+    downtrend := true
+else if not na(lastSwingLow)
+    uptrend := true
+    downtrend := false
 
 // Detect BoS and CHoCH
 var string bosLabel = ""
@@ -151,12 +156,12 @@ if not na(swingHigh)
     obBearClose := close[swingLength]
     obBearBar := bar_index[swingLength]
 
-// Plot Order Blocks
-if showOB and not na(obBullOpen)
+// Plot Order Blocks - Only create new boxes when a new swing is detected
+if showOB and not na(obBullOpen) and bar_index == obBullBar
     box.new(obBullBar, math.max(obBullOpen, obBullClose), bar_index, math.min(obBullOpen, obBullClose), 
          border_color=obBullColor, bgcolor=obBullColor, border_width=1)
 
-if showOB and not na(obBearOpen)
+if showOB and not na(obBearOpen) and bar_index == obBearBar
     box.new(obBearBar, math.max(obBearOpen, obBearClose), bar_index, math.min(obBearOpen, obBearClose), 
          border_color=obBearColor, bgcolor=obBearColor, border_width=1)
 
@@ -187,13 +192,13 @@ if bearishFVG
     fvgBearBottom := high
     fvgBearBar := bar_index
 
-// Plot FVG
-if showFVG and not na(fvgBullTop)
-    box.new(fvgBullBar, fvgBullTop, bar_index, fvgBullBottom, 
+// Plot FVG - Only create new boxes when a new FVG is detected
+if showFVG and bullishFVG
+    box.new(bar_index, low, bar_index, high[2], 
          border_color=fvgBullColor, bgcolor=fvgBullColor, border_width=1)
 
-if showFVG and not na(fvgBearTop)
-    box.new(fvgBearBar, fvgBearTop, bar_index, fvgBearBottom, 
+if showFVG and bearishFVG
+    box.new(bar_index, low[2], bar_index, high, 
          border_color=fvgBearColor, bgcolor=fvgBearColor, border_width=1)
 
 // =============================================================================
@@ -227,12 +232,12 @@ if not na(swingHigh)
         supplyBottom := low[swingLength]
         supplyBar := bar_index[swingLength]
 
-// Plot SnD Zones
-if showSnD and not na(demandTop)
+// Plot SnD Zones - Only create new boxes when a new zone is detected
+if showSnD and not na(demandTop) and bar_index == demandBar
     box.new(demandBar, demandTop, bar_index, demandBottom, 
          border_color=sndBullColor, bgcolor=sndBullColor, border_width=2)
 
-if showSnD and not na(supplyTop)
+if showSnD and not na(supplyTop) and bar_index == supplyBar
     box.new(supplyBar, supplyTop, bar_index, supplyBottom, 
          border_color=sndBearColor, bgcolor=sndBearColor, border_width=2)
 
@@ -250,14 +255,19 @@ if not na(lastSwingLow)
 if not na(lastSwingHigh)
     resistanceLevel := lastSwingHigh
 
-// Plot S&R Lines
-if showSnR and not na(supportLevel)
+// Plot S&R Lines - Only create new lines when levels change
+var float prevSupportLevel = na
+var float prevResistanceLevel = na
+
+if showSnR and not na(supportLevel) and supportLevel != prevSupportLevel
     line.new(bar_index - 10, supportLevel, bar_index, supportLevel, 
          color=snrColor, width=2, style=line.style_solid)
+    prevSupportLevel := supportLevel
 
-if showSnR and not na(resistanceLevel)
+if showSnR and not na(resistanceLevel) and resistanceLevel != prevResistanceLevel
     line.new(bar_index - 10, resistanceLevel, bar_index, resistanceLevel, 
          color=snrColor, width=2, style=line.style_solid)
+    prevResistanceLevel := resistanceLevel
 
 // =============================================================================
 // FIBONACCI RETRACEMENT
@@ -281,8 +291,10 @@ if not na(swingLow)
     fibEndBar := lastSwingLowBar
     fibUptrend := true
 
-// Draw Fibonacci retracement levels
-if showFib and not na(fibStart) and not na(fibEnd)
+// Draw Fibonacci retracement levels - Only draw when swing points update
+var int lastFibDrawBar = na
+
+if showFib and not na(fibStart) and not na(fibEnd) and (bar_index == fibStartBar or bar_index == fibEndBar or na(lastFibDrawBar))
     fibRange = fibUptrend ? fibEnd - fibStart : fibStart - fibEnd
     
     // Common Fib levels: 0, 0.236, 0.382, 0.5, 0.618, 0.786, 1
@@ -292,6 +304,7 @@ if showFib and not na(fibStart) and not na(fibEnd)
         fibPrice = fibUptrend ? fibStart + (fibRange * level) : fibStart - (fibRange * level)
         line.new(fibStartBar, fibPrice, bar_index, fibPrice, 
              color=fibColor, width=1, style=line.style_dotted)
+    lastFibDrawBar := bar_index
 
 // =============================================================================
 // ALERTS
