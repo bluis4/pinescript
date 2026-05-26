@@ -68,8 +68,12 @@ if na(lastSwingHigh) and na(lastSwingLow)
     uptrend := false
     downtrend := false
 else if not na(lastSwingHigh) and not na(lastSwingLow)
-    uptrend := lastSwingHigh > lastSwingLow ? false : true
-    downtrend := !uptrend
+    if lastSwingHigh > lastSwingLow
+        uptrend := false
+        downtrend := true
+    else
+        uptrend := true
+        downtrend := false
 else if not na(lastSwingHigh)
     uptrend := false
     downtrend := true
