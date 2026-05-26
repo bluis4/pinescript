@@ -1,0 +1,309 @@
+//@version=6
+indicator("SMC Strategy with Fibonacci Confluence", overlay=true, max_labels_count=500)
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+
+// Swing Detection
+swingLength = input.int(5, "Swing Length", minval=2, maxval=50)
+
+// Show/Hide Options
+showBoS = input.bool(true, "Show Break of Structure (BoS)")
+showCHoCH = input.bool(true, "Show Change of Character (CHoCH)")
+showOB = input.bool(true, "Show Order Blocks")
+showFVG = input.bool(true, "Show Fair Value Gaps (FVG)")
+showSnD = input.bool(true, "Show Supply & Demand Zones")
+showSnR = input.bool(true, "Show Support & Resistance")
+showFib = input.bool(true, "Show Fibonacci Retracement")
+
+// Colors
+bosBullColor = input.color(color.new(color.green, 0), "BoS Bullish Color")
+bosBearColor = input.color(color.new(color.red, 0), "BoS Bearish Color")
+chochBullColor = input.color(color.new(color.lime, 0), "CHoCH Bullish Color")
+chochBearColor = input.color(color.new(color.maroon, 0), "CHoCH Bearish Color")
+obBullColor = input.color(color.new(color.green, 80), "Order Block Bullish Color")
+obBearColor = input.color(color.new(color.red, 80), "Order Block Bearish Color")
+fvgBullColor = input.color(color.new(color.green, 70), "FVG Bullish Color")
+fvgBearColor = input.color(color.new(color.red, 70), "FVG Bearish Color")
+sndBullColor = input.color(color.new(color.blue, 80), "Demand Zone Color")
+sndBearColor = input.color(color.new(color.orange, 80), "Supply Zone Color")
+snrColor = input.color(color.new(color.gray, 50), "Support & Resistance Color")
+fibColor = input.color(color.new(color.purple, 60), "Fibonacci Levels Color")
+
+// =============================================================================
+// SWING HIGH/LOW DETECTION
+// =============================================================================
+
+swingHigh = ta.pivothigh(swingLength, swingLength)
+swingLow = ta.pivotlow(swingLength, swingLength)
+
+var float lastSwingHigh = na
+var float lastSwingLow = na
+var int lastSwingHighBar = na
+var int lastSwingLowBar = na
+
+if not na(swingHigh)
+    lastSwingHigh := high[swingLength]
+    lastSwingHighBar := bar_index[swingLength]
+
+if not na(swingLow)
+    lastSwingLow := low[swingLength]
+    lastSwingLowBar := bar_index[swingLength]
+
+// =============================================================================
+// STRUCTURE DETECTION (BoS & CHoCH)
+// =============================================================================
+
+var float prevHigh = na
+var float prevLow = na
+var float currentHigh = na
+var float currentLow = na
+var bool uptrend = na
+var bool downtrend = na
+var string structure = ""
+
+// Initialize trend on first valid swing
+if na(uptrend) and (not na(lastSwingHigh) or not na(lastSwingLow))
+    if not na(lastSwingHigh) and not na(lastSwingLow)
+        uptrend := lastSwingHigh > lastSwingLow ? false : true
+    else if not na(lastSwingHigh)
+        uptrend := false
+    else
+        uptrend := true
+
+// Detect BoS and CHoCH
+var string bosLabel = ""
+var string chochLabel = ""
+var color bosLineColor = na
+var color chochLineColor = na
+
+// Bullish BoS: Price breaks above previous high in uptrend
+bullishBoS = uptrend and not na(lastSwingHigh) and high > lastSwingHigh
+// Bearish BoS: Price breaks below previous low in downtrend
+bearishBoS = downtrend and not na(lastSwingLow) and low < lastSwingLow
+
+// Bullish CHoCH: Downtrend reverses by breaking previous high
+bullishCHoCH = downtrend and not na(lastSwingHigh) and high > lastSwingHigh
+// Bearish CHoCH: Uptrend reverses by breaking previous low
+bearishCHoCH = uptrend and not na(lastSwingLow) and low < lastSwingLow
+
+if bullishBoS
+    bosLabel := "BoS"
+    bosLineColor := bosBullColor
+    prevHigh := lastSwingHigh
+    // Update structure levels
+    currentHigh := high
+if bearishBoS
+    bosLabel := "BoS"
+    bosLineColor := bosBearColor
+    prevLow := lastSwingLow
+    currentLow := low
+
+if bullishCHoCH
+    chochLabel := "CHoCH"
+    chochLineColor := chochBullColor
+    uptrend := true
+    downtrend := false
+    prevHigh := lastSwingHigh
+if bearishCHoCH
+    chochLabel := "CHoCH"
+    chochLineColor := chochBearColor
+    uptrend := false
+    downtrend := true
+    prevLow := lastSwingLow
+
+// Plot BoS Labels
+if showBoS and bullishBoS
+    label.new(bar_index, low, text="BoS\n▲", style=label.style_label_up, color=bosBullColor, textcolor=color.white, size=size.small)
+if showBoS and bearishBoS
+    label.new(bar_index, high, text="BoS\n▼", style=label.style_label_down, color=bosBearColor, textcolor=color.white, size=size.small)
+
+// Plot CHoCH Labels
+if showCHoCH and bullishCHoCH
+    label.new(bar_index, low, text="CHoCH\n▲", style=label.style_label_up, color=chochBullColor, textcolor=color.white, size=size.small)
+if showCHoCH and bearishCHoCH
+    label.new(bar_index, high, text="CHoCH\n▼", style=label.style_label_down, color=chochBearColor, textcolor=color.white, size=size.small)
+
+// =============================================================================
+// ORDER BLOCKS
+// =============================================================================
+
+// Bullish Order Block: Last bearish candle before bullish move
+var float obBullOpen = na
+var float obBullClose = na
+var int obBullBar = na
+
+// Bearish Order Block: Last bullish candle before bearish move
+var float obBearOpen = na
+var float obBearClose = na
+var int obBearBar = na
+
+// Detect Order Blocks at swing points
+if not na(swingLow)
+    // Check if the candle at swingLow is an order block candidate
+    obBullOpen := open[swingLength]
+    obBullClose := close[swingLength]
+    obBullBar := bar_index[swingLength]
+
+if not na(swingHigh)
+    obBearOpen := open[swingLength]
+    obBearClose := close[swingLength]
+    obBearBar := bar_index[swingLength]
+
+// Plot Order Blocks
+if showOB and not na(obBullOpen)
+    box.new(obBullBar, math.max(obBullOpen, obBullClose), bar_index, math.min(obBullOpen, obBullClose), 
+         border_color=obBullColor, bgcolor=obBullColor, border_width=1)
+
+if showOB and not na(obBearOpen)
+    box.new(obBearBar, math.max(obBearOpen, obBearClose), bar_index, math.min(obBearOpen, obBearClose), 
+         border_color=obBearColor, bgcolor=obBearColor, border_width=1)
+
+// =============================================================================
+// FAIR VALUE GAPS (FVG)
+// =============================================================================
+
+// Bullish FVG: Current low > Previous high (gap between candles)
+bullishFVG = low > high[2] and close[1] > open[1]
+// Bearish FVG: Current high < Previous low
+bearishFVG = high < low[2] and close[1] < open[1]
+
+var float fvgBullTop = na
+var float fvgBullBottom = na
+var int fvgBullBar = na
+
+var float fvgBearTop = na
+var float fvgBearBottom = na
+var int fvgBearBar = na
+
+if bullishFVG
+    fvgBullTop := low
+    fvgBullBottom := high[2]
+    fvgBullBar := bar_index
+
+if bearishFVG
+    fvgBearTop := low[2]
+    fvgBearBottom := high
+    fvgBearBar := bar_index
+
+// Plot FVG
+if showFVG and not na(fvgBullTop)
+    box.new(fvgBullBar, fvgBullTop, bar_index, fvgBullBottom, 
+         border_color=fvgBullColor, bgcolor=fvgBullColor, border_width=1)
+
+if showFVG and not na(fvgBearTop)
+    box.new(fvgBearBar, fvgBearTop, bar_index, fvgBearBottom, 
+         border_color=fvgBearColor, bgcolor=fvgBearColor, border_width=1)
+
+// =============================================================================
+// SUPPLY & DEMAND ZONES (SnD)
+// =============================================================================
+
+// Demand Zone: Area around significant swing lows
+// Supply Zone: Area around significant swing highs
+
+var float demandTop = na
+var float demandBottom = na
+var int demandBar = na
+
+var float supplyTop = na
+var float supplyBottom = na
+var int supplyBar = na
+
+// Create zones at major swing points (every 3rd swing for significance)
+var int swingCount = 0
+if not na(swingLow)
+    swingCount += 1
+    if swingCount % 3 == 0
+        demandTop := high[swingLength]
+        demandBottom := low[swingLength]
+        demandBar := bar_index[swingLength]
+
+if not na(swingHigh)
+    swingCount += 1
+    if swingCount % 3 == 0
+        supplyTop := high[swingLength]
+        supplyBottom := low[swingLength]
+        supplyBar := bar_index[swingLength]
+
+// Plot SnD Zones
+if showSnD and not na(demandTop)
+    box.new(demandBar, demandTop, bar_index, demandBottom, 
+         border_color=sndBullColor, bgcolor=sndBullColor, border_width=2)
+
+if showSnD and not na(supplyTop)
+    box.new(supplyBar, supplyTop, bar_index, supplyBottom, 
+         border_color=sndBearColor, bgcolor=sndBearColor, border_width=2)
+
+// =============================================================================
+// SUPPORT & RESISTANCE (SnR)
+// =============================================================================
+
+// Simple S&R based on recent swing highs and lows
+var float supportLevel = na
+var float resistanceLevel = na
+
+if not na(lastSwingLow)
+    supportLevel := lastSwingLow
+
+if not na(lastSwingHigh)
+    resistanceLevel := lastSwingHigh
+
+// Plot S&R Lines
+if showSnR and not na(supportLevel)
+    line.new(bar_index - 10, supportLevel, bar_index, supportLevel, 
+         color=snrColor, width=2, style=line.style_solid)
+
+if showSnR and not na(resistanceLevel)
+    line.new(bar_index - 10, resistanceLevel, bar_index, resistanceLevel, 
+         color=snrColor, width=2, style=line.style_solid)
+
+// =============================================================================
+// FIBONACCI RETRACEMENT
+// =============================================================================
+
+// Calculate Fib levels from recent swing high to swing low (or vice versa)
+var float fibStart = na
+var float fibEnd = na
+var int fibStartBar = na
+var int fibEndBar = na
+var bool fibUptrend = true
+
+// Update Fib levels on new swings
+if not na(swingHigh)
+    fibStart := lastSwingHigh
+    fibStartBar := lastSwingHighBar
+    fibUptrend := false
+
+if not na(swingLow)
+    fibEnd := lastSwingLow
+    fibEndBar := lastSwingLowBar
+    fibUptrend := true
+
+// Draw Fibonacci retracement levels
+if showFib and not na(fibStart) and not na(fibEnd)
+    fibRange = fibUptrend ? fibEnd - fibStart : fibStart - fibEnd
+    
+    // Common Fib levels: 0, 0.236, 0.382, 0.5, 0.618, 0.786, 1
+    fibLevels = array.from(0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0)
+    
+    for level in fibLevels
+        fibPrice = fibUptrend ? fibStart + (fibRange * level) : fibStart - (fibRange * level)
+        line.new(fibStartBar, fibPrice, bar_index, fibPrice, 
+             color=fibColor, width=1, style=line.style_dotted)
+
+// =============================================================================
+// ALERTS
+// =============================================================================
+
+alertcondition(bullishBoS, title="Bullish BoS", message="Bullish Break of Structure detected!")
+alertcondition(bearishBoS, title="Bearish BoS", message="Bearish Break of Structure detected!")
+alertcondition(bullishCHoCH, title="Bullish CHoCH", message="Bullish Change of Character detected!")
+alertcondition(bearishCHoCH, title="Bearish CHoCH", message="Bearish Change of Character detected!")
+alertcondition(bullishFVG, title="Bullish FVG", message="Bullish Fair Value Gap detected!")
+alertcondition(bearishFVG, title="Bearish FVG", message="Bearish Fair Value Gap detected!")
+
+// =============================================================================
+// END OF INDICATOR
+// =============================================================================
