@@ -1,9 +1,9 @@
 // This work is derived from LuxAlgo Smart Money Concepts (CC BY-NC-SA 4.0)
 // https://creativecommons.org/licenses/by-nc-sa/4.0/
-// © LuxAlgo | Modified by bluis21 as SMC-MatLux-v1.8.4
+// © LuxAlgo | Modified by bluis21 as SMC-MatLux-v1.9.3.4
 
 //@version=5
-indicator('SMC-MatLux-v1.8.4', overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+indicator('SMC-MatLux-v1.9.3.4', overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
 
 //---------------------------------------------------------------------------------------------------------------------}
 // CONSTANTS
@@ -23,52 +23,55 @@ bearishBreakColor   = input.color(#F23645, 'Bearish Break Color',   group = 'Bre
 // --- Strong/Weak High/Low ---
 bullishHighLowColor = input.color(#089981, 'Bullish H/L Color',     group = 'Strong/Weak High/Low')
 bearishHighLowColor = input.color(#F23645, 'Bearish H/L Color',     group = 'Strong/Weak High/Low')
-swingLength          = input.int(50, 'Swing Detection Length',       group = 'Strong/Weak High/Low', minval = 1, tooltip = 'Lookback bars used to detect swing highs/lows. Lower = more sensitive (noisier on low timeframes), higher = smoother (laggier on high timeframes).')
+swingLength         = input.int(50, 'Swing Detection Length',       group = 'Strong/Weak High/Low', minval = 1,
+     tooltip = 'Lookback bars for swing high/low detection. Lower = more sensitive, Higher = smoother.')
 
 // --- Zones ---
-showEqZone      = input.bool(true, 'Show Zone 1 (BR2 / Equilibrium)', group = 'Equilibrium Zone')
-showFibZone     = input.bool(true, 'Show Zone 2 (BR1 / Fibonacci)',   group = 'Equilibrium Zone')
-eqZoneColorBull = input.color(color.new(#089981, 70), 'Bullish Zone Color',  group = 'Equilibrium Zone')
-eqZoneColorBear = input.color(color.new(#F23645, 70), 'Bearish Zone Color',  group = 'Equilibrium Zone')
-eqZoneColorNeut = input.color(color.new(color.yellow, 50), 'Neutral Zone Color', group = 'Equilibrium Zone')
-eqLabelColor    = input.color(color.white, 'Price Label Color',       group = 'Equilibrium Zone')
+showEqZone      = input.bool(true,  'Show Zone 1 (Equilibrium / BR2)', group = 'Zones')
+showFibZone     = input.bool(true,  'Show Zone 2 (Fibonacci / BR1)',   group = 'Zones')
+eqZoneColorBull = input.color(color.new(#089981, 70), 'Bullish Zone Color',  group = 'Zones')
+eqZoneColorBear = input.color(color.new(#F23645, 70), 'Bearish Zone Color',  group = 'Zones')
+eqZoneColorNeut = input.color(color.new(color.yellow, 50), 'Neutral Zone Color', group = 'Zones')
+eqLabelColor    = input.color(color.white, 'Price Label Color',  group = 'Zones')
 
 // --- Trend Filter ---
-enableTrendFilter = input.bool(false, 'Enable Trend Filter',     group = 'Trend Filter')
-trendTimeframe    = input.timeframe('D', 'Trend Timeframe',       group = 'Trend Filter')
-maType            = input.string('EMA', 'MA Type',               group = 'Trend Filter', options = ['SMA', 'EMA'])
-maLength          = input.int(200, 'MA Length',                  group = 'Trend Filter', minval = 1)
-showTrendMa       = input.bool(false, 'Show Trend MA on Chart',  group = 'Trend Filter')
-trendMaColor      = input.color(color.orange, 'Trend MA Color',  group = 'Trend Filter')
+enableTrendFilter = input.bool(false, 'Enable Trend Filter',    group = 'Trend Filter')
+trendTimeframe    = input.timeframe('D', 'Trend Timeframe',     group = 'Trend Filter')
+maType            = input.string('EMA', 'MA Type',              group = 'Trend Filter', options = ['SMA', 'EMA'])
+maLength          = input.int(200, 'MA Length',                 group = 'Trend Filter', minval = 1)
+showTrendMa       = input.bool(false, 'Show Trend MA on Chart', group = 'Trend Filter')
+trendMaColor      = input.color(color.orange, 'Trend MA Color', group = 'Trend Filter')
 
 // --- Strategy General ---
-// NOTE: These 4 inputs are placeholders for v1.9 (entry/SL/TP logic).
-// They are NOT yet wired into any calculation — declared early per user request
-// so the settings panel layout is ready ahead of the entry-logic build.
-enableBr1Entry = input.bool(true,   'Enable BR 1 Entry (Zone 2)', group = 'Strategy - General', tooltip = 'Placeholder for v1.9 — not yet active')
-enableBr2Entry = input.bool(true,   'Enable BR 2 Entry (Zone 1)', group = 'Strategy - General', tooltip = 'Placeholder for v1.9 — not yet active')
-tradeDirection = input.string('Both', 'Trade Direction',          group = 'Strategy - General', options = ['Both', 'Buy', 'Sell'], tooltip = 'Placeholder for v1.9 — not yet active')
-entryTrigger   = input.string('Candle Close', 'Entry Trigger',    group = 'Strategy - General', options = ['Candle Close', 'Wick Touch'], tooltip = 'Placeholder for v1.9 — not yet active')
+enableZ1Entry  = input.bool(true,  'Enable Zone 1 Entry (Equilibrium)', group = 'Strategy - General',
+     tooltip = 'Zone 1 = Equilibrium (0.525/0.475 band). Primary retest zone.')
+enableZ2Entry  = input.bool(true,  'Enable Zone 2 Entry (Fibonacci)',   group = 'Strategy - General',
+     tooltip = 'Zone 2 = Fibonacci 0.618/0.786. Deeper retracement zone.')
+tradeDirection = input.string('Both', 'Trade Direction',                group = 'Strategy - General',
+     options = ['Both', 'Buy', 'Sell'])
+entryTrigger   = input.string('Price Touch', 'Entry Trigger',           group = 'Strategy - General',
+     options = ['Price Touch', 'Candle Close'],
+     tooltip = 'Price Touch = limit order at zone boundary | Candle Close = entry on confirmed close inside zone')
+showEntryLabels = input.bool(true, 'Show Entry/SL/TP Labels',           group = 'Strategy - General')
 
 // --- Sideways Filter ---
-// FIX #7: Replaced single-method from zAI with 4 methods matching Choppiness Index suggestion + ADX + ATR + BB
-sidewaysMethod  = input.string('Choppiness Index', 'Detection Method', group = 'Sideways Filter',
+sidewaysMethod = input.string('Choppiness Index', 'Detection Method', group = 'Sideways Filter',
      options = ['Choppiness Index', 'ADX', 'ATR Squeeze', 'Bollinger Squeeze'])
-sidewaysLength  = input.int(14,   'Detection Length',    group = 'Sideways Filter', minval = 1)
-chopThreshold   = input.float(61.8, 'CHOP Threshold',   group = 'Sideways Filter', tooltip = 'Above this = sideways. Standard level = 61.8')
-adxSmooth       = input.int(14,   'ADX Smoothing',       group = 'Sideways Filter', minval = 1)
-adxThreshold    = input.float(20.0, 'ADX Threshold',     group = 'Sideways Filter', tooltip = 'Below this = sideways')
-atrLength       = input.int(14,   'ATR Length',          group = 'Sideways Filter', minval = 1)
-atrMaLength     = input.int(50,   'ATR MA Length',       group = 'Sideways Filter', minval = 1)
-atrThreshold    = input.float(0.9, 'ATR Multiplier',     group = 'Sideways Filter', step = 0.05)
-bbLength        = input.int(20,   'BB Length',           group = 'Sideways Filter', minval = 1)
-bbMult          = input.float(2.0, 'BB StdDev',          group = 'Sideways Filter', step = 0.1)
-bbMaLength      = input.int(50,   'BB Width MA Length',  group = 'Sideways Filter', minval = 1)
-bbThreshold     = input.float(0.85,'BB Width Multiplier',group = 'Sideways Filter', step = 0.05)
+sidewaysLength = input.int(14,    'Detection Length',    group = 'Sideways Filter', minval = 1)
+chopThreshold  = input.float(61.8,'CHOP Threshold',      group = 'Sideways Filter', tooltip = 'Above this = sideways')
+adxSmooth      = input.int(14,    'ADX Smoothing',       group = 'Sideways Filter', minval = 1)
+adxThreshold   = input.float(20.0,'ADX Threshold',       group = 'Sideways Filter', tooltip = 'Below this = sideways')
+atrLength      = input.int(14,    'ATR Length',          group = 'Sideways Filter', minval = 1)
+atrMaLength    = input.int(50,    'ATR MA Length',       group = 'Sideways Filter', minval = 1)
+atrThreshold   = input.float(0.9, 'ATR Multiplier',      group = 'Sideways Filter', step = 0.05)
+bbLength       = input.int(20,    'BB Length',           group = 'Sideways Filter', minval = 1)
+bbMult         = input.float(2.0, 'BB StdDev',           group = 'Sideways Filter', step = 0.1)
+bbMaLength     = input.int(50,    'BB Width MA Length',  group = 'Sideways Filter', minval = 1)
+bbThreshold    = input.float(0.85,'BB Width Multiplier', group = 'Sideways Filter', step = 0.05)
 
 // --- Dashboard ---
-showDashboard = input.bool(true, 'Show Zone Dashboard',  group = 'Dashboard')
-dashPosition  = input.string('Top Right', 'Dashboard Position', group = 'Dashboard',
+showDashboard = input.bool(true, 'Show Zone Dashboard',   group = 'Dashboard')
+dashPosition  = input.string('Top Right', 'Position',     group = 'Dashboard',
      options = ['Top Right', 'Top Left', 'Bottom Right', 'Bottom Left'])
 dashBgColor   = input.color(color.new(#1e222d, 10), 'Background Color', group = 'Dashboard')
 
@@ -101,77 +104,42 @@ var trailingExtremes trailing = trailingExtremes.new()
 //---------------------------------------------------------------------------------------------------------------------}
 // ZONE STATE & FRESHNESS
 //---------------------------------------------------------------------------------------------------------------------{
-var int   zoneState       = 0
-var float prevTrailingTop = na
-var float prevTrailingBot = na
+var int zoneState = 0
+var bool z1Used = false
+var bool z2Used = false
 
-// 4 directional freshness flags
-// z1 = Zone 1 (BR2 / Equilibrium), z2 = Zone 2 (BR1 / Fibo)
-// Bull = BUY setup freshness, Bear = SELL setup freshness
-var bool z1FreshBull = true   // Zone 1 BUY freshness
-var bool z1FreshBear = true   // Zone 1 SELL freshness
-var bool z2FreshBull = true   // Zone 2 BUY freshness
-var bool z2FreshBear = true   // Zone 2 SELL freshness
+var float z1SnapTop = na
+var float z1SnapBot = na
+var float z2SnapTop = na
+var float z2SnapBot = na
 
-// Tracks whether a break fired THIS bar — alertcondition reads these instead of
-// re-deriving from swingHigh.crossed/swingLow.crossed, which are already true
-// by the time alertcondition evaluates (displaySwingStructure runs first each bar),
-// making "not crossed" always false on the actual breakout bar.
+var int snapBar = na
+
 var bool bullBreakFiredThisBar = false
 var bool bearBreakFiredThisBar = false
 
-
 //---------------------------------------------------------------------------------------------------------------------}
 // TREND FILTER
-// FIX #6: Compute trendBullish/trendBearish and wire to dashboard ALLOW/BLOCK
 //---------------------------------------------------------------------------------------------------------------------{
 trendMA      = maType == 'EMA' ? request.security(syminfo.tickerid, trendTimeframe, ta.ema(close, maLength))
              : request.security(syminfo.tickerid, trendTimeframe, ta.sma(close, maLength))
 trendBullish = close > trendMA
 trendBearish = close < trendMA
-// ALLOW = filter disabled OR price agrees with direction
 trendAllowBuy  = not enableTrendFilter or trendBullish
 trendAllowSell = not enableTrendFilter or trendBearish
 
 plot(showTrendMa ? trendMA : na, 'Trend MA', color = trendMaColor, linewidth = 1)
 
 //---------------------------------------------------------------------------------------------------------------------}
-// SIDEWAYS DETECTION
-// FIX #7: Full 4-method implementation (Choppiness, ADX, ATR Squeeze, BB Squeeze)
+// SIDEWAYS DETECTION — disabled per design decision, inputs retained for future use
 //---------------------------------------------------------------------------------------------------------------------{
-checkSideways() =>
-    bool sideways = false
-    if sidewaysMethod == 'Choppiness Index'
-        float trSum      = math.sum(ta.tr, sidewaysLength)
-        float highHigh   = ta.highest(high, sidewaysLength)
-        float lowLow     = ta.lowest(low,   sidewaysLength)
-        float chop       = 100 * math.log10(trSum / (highHigh - lowLow)) / math.log10(sidewaysLength)
-        sideways        := chop > chopThreshold
-    else if sidewaysMethod == 'ADX'
-        [_dp, _dm, adx] = ta.dmi(sidewaysLength, adxSmooth)
-        sideways        := adx < adxThreshold
-    else if sidewaysMethod == 'ATR Squeeze'
-        float currAtr   = ta.atr(atrLength)
-        float atrMa     = ta.sma(currAtr, atrMaLength)
-        sideways        := currAtr < atrMa * atrThreshold
-    else if sidewaysMethod == 'Bollinger Squeeze'
-        [_mid, upper, lower] = ta.bb(close, bbLength, bbMult)
-        float bw        = (upper - lower) / _mid
-        float bwSma     = ta.sma(bw, bbMaLength)
-        sideways        := bw < bwSma * bbThreshold
-    sideways
-
-// Compute once per bar at global scope
-bool isSideways = checkSideways()
+bool isSideways = false
 
 //---------------------------------------------------------------------------------------------------------------------}
 // FUNCTIONS
 //---------------------------------------------------------------------------------------------------------------------{
 leg(int size) =>
-    var leg          = 0
-    // Note: a new high triggers a BEARISH leg (price just made a high, expect pullback)
-    // and a new low triggers a BULLISH leg — names reflect what they trigger, not the
-    // direction of the price action itself
+    var leg         = 0
     bearishLegStart = high[size] > ta.highest(size)
     bullishLegStart = low[size]  < ta.lowest(size)
     if bearishLegStart
@@ -184,12 +152,10 @@ startOfNewLeg(int leg)     => ta.change(leg) != 0
 startOfBearishLeg(int leg) => ta.change(leg) == -1
 startOfBullishLeg(int leg) => ta.change(leg) == 1
 
-// Returns [newPivot, pivotWasLow] so caller knows which direction the new swing was
 getCurrentStructure(int size) =>
     currentLeg = leg(size)
     newPivot   = startOfNewLeg(currentLeg)
     pivotLow   = startOfBullishLeg(currentLeg)
-
     if newPivot
         if pivotLow
             pivot p_ivot        = swingLow
@@ -213,38 +179,23 @@ getCurrentStructure(int size) =>
             trailing.barTime        := p_ivot.barTime
             trailing.barIndex       := p_ivot.barIndex
             trailing.lastTopTime    := p_ivot.barTime
-    // FIX #2: return both newPivot and direction for directional freshness reset
     [newPivot, pivotLow]
 
 drawBreakLine(pivot p_ivot, color structureColor, string labelStyle) =>
     line.new(
          chart.point.new(p_ivot.barTime, na, p_ivot.currentLevel),
          chart.point.new(time,           na, p_ivot.currentLevel),
-         xloc.bar_time,
-         color = structureColor,
-         style = line.style_solid,
-         width = 1)
+         xloc.bar_time, color = structureColor, style = line.style_solid, width = 1)
     label.new(
          chart.point.new(na, math.round(0.5 * (p_ivot.barIndex + bar_index)), p_ivot.currentLevel),
-         'Break',
-         xloc.bar_index,
-         color     = na,
-         textcolor = structureColor,
-         style     = labelStyle,
-         size      = size.small)
+         'Break', xloc.bar_index, color = na, textcolor = structureColor, style = labelStyle, size = size.small)
 
-// Returns [bullFired, bearFired] — caller assigns to var globals, since Pine
-// does not allow writing var globals from inside a function body
+// Returns [bullFired, bearFired] — var globals assigned at call site (Pine restriction)
 displaySwingStructure() =>
     pivot p_ivot = swingHigh
     trend t_rend = swingTrend
-
-    // Extracted to unconditional per-bar calls — Pine requires ta.* functions
-    // to be evaluated every bar for consistent internal state, not just inside
-    // a conditional branch
-    bool crossUp   = ta.crossover(close, swingHigh.currentLevel)
+    bool crossUp   = ta.crossover( close, swingHigh.currentLevel)
     bool crossDown = ta.crossunder(close, swingLow.currentLevel)
-
     bool bullFired = false
     bool bearFired = false
 
@@ -254,15 +205,11 @@ displaySwingStructure() =>
         bullFired      := true
         drawBreakLine(p_ivot, bullishBreakColor, label.style_label_down)
     else if crossDown and not swingLow.crossed
-        // Fix #4: else if makes bull/bear mutually exclusive — only one direction
-        // can fire per bar, matching the fact that price can't cross both levels
-        // in the same direction simultaneously
-        pivot p_low = swingLow
-        p_low.crossed := true
-        t_rend.bias   := BEARISH
-        bearFired     := true
+        pivot p_low    = swingLow
+        p_low.crossed  := true
+        t_rend.bias    := BEARISH
+        bearFired      := true
         drawBreakLine(p_low, bearishBreakColor, label.style_label_up)
-
     [bullFired, bearFired]
 
 updateTrailingExtremes() =>
@@ -274,57 +221,97 @@ updateTrailingExtremes() =>
 drawHighLowSwings() =>
     var line topLine    = line.new(na, na, na, na, color = bearishHighLowColor, xloc = xloc.bar_time, style = line.style_dashed)
     var line bottomLine = line.new(na, na, na, na, color = bullishHighLowColor, xloc = xloc.bar_time, style = line.style_dashed)
-
-    rightTimeBar = last_bar_time + 20 * (time - time[1])
-
+    int rightTimeBar    = last_bar_time + 20 * (time - time[1])
     topLine.set_first_point(    chart.point.new(trailing.lastTopTime,    na, trailing.top))
     topLine.set_second_point(   chart.point.new(rightTimeBar,            na, trailing.top))
     bottomLine.set_first_point( chart.point.new(trailing.lastBottomTime, na, trailing.bottom))
     bottomLine.set_second_point(chart.point.new(rightTimeBar,            na, trailing.bottom))
 
 drawZones(color zoneColor, float eqTop, float eqBottom, float z2Top, float z2Bottom) =>
-    float eqMid = math.avg(eqTop, eqBottom)
-    float z2Mid = not na(z2Top) ? math.avg(z2Top, z2Bottom) : na
+    float eqMid    = math.avg(eqTop, eqBottom)
+    float z2Mid    = not na(z2Top) ? math.avg(z2Top, z2Bottom) : na
+    int rightBar   = last_bar_time + 20 * (time - time[1])
+    int leftBar    = swingHigh.barTime
+    int midBarIdx  = math.round(0.5 * (swingHigh.barIndex + bar_index))
 
-    int rightTimeBar = last_bar_time + 20 * (time - time[1])
-    int midBarIndex  = math.round(0.5 * (trailing.barIndex + last_bar_index))
+    color borderColor = color.new(zoneColor, 0)
 
-    var box   eqBox       = box.new(na, na, na, na, bgcolor = zoneColor, border_color = na, xloc = xloc.bar_time)
-    var label eqLblZone   = label.new(na, na, text = 'Zone 1', color = na, textcolor = eqLabelColor, style = label.style_label_center, size = size.small, xloc = xloc.bar_index)
-    var label eqLblTop    = label.new(na, na, text = '', color = na, textcolor = eqLabelColor, style = label.style_label_left, size = size.small, xloc = xloc.bar_time)
-    var label eqLblBot    = label.new(na, na, text = '', color = na, textcolor = eqLabelColor, style = label.style_label_left, size = size.small, xloc = xloc.bar_time)
+    var box   eqBox     = box.new(na, na, na, na, bgcolor = zoneColor, border_color = borderColor, border_style = line.style_solid, border_width = 1, xloc = xloc.bar_time)
+    var label eqLblZone = label.new(na, na, text = 'Zone 1', color = na, textcolor = eqLabelColor, style = label.style_label_center, size = size.small, xloc = xloc.bar_index)
+    var label eqLblTop  = label.new(na, na, text = '', color = na, textcolor = eqLabelColor, style = label.style_label_left, size = size.small, xloc = xloc.bar_time)
+    var label eqLblBot  = label.new(na, na, text = '', color = na, textcolor = eqLabelColor, style = label.style_label_left, size = size.small, xloc = xloc.bar_time)
 
-    var box   z2Box       = box.new(na, na, na, na, bgcolor = zoneColor, border_color = na, xloc = xloc.bar_time)
-    var label z2LblZone   = label.new(na, na, text = 'Zone 2', color = na, textcolor = eqLabelColor, style = label.style_label_center, size = size.small, xloc = xloc.bar_index)
-    var label z2LblTop    = label.new(na, na, text = '', color = na, textcolor = eqLabelColor, style = label.style_label_left, size = size.small, xloc = xloc.bar_time)
-    var label z2LblBot    = label.new(na, na, text = '', color = na, textcolor = eqLabelColor, style = label.style_label_left, size = size.small, xloc = xloc.bar_time)
+    var box   z2Box     = box.new(na, na, na, na, bgcolor = zoneColor, border_color = borderColor, border_style = line.style_solid, border_width = 1, xloc = xloc.bar_time)
+    var label z2LblZone = label.new(na, na, text = 'Zone 2', color = na, textcolor = eqLabelColor, style = label.style_label_center, size = size.small, xloc = xloc.bar_index)
+    var label z2LblTop  = label.new(na, na, text = '', color = na, textcolor = eqLabelColor, style = label.style_label_left, size = size.small, xloc = xloc.bar_time)
+    var label z2LblBot  = label.new(na, na, text = '', color = na, textcolor = eqLabelColor, style = label.style_label_left, size = size.small, xloc = xloc.bar_time)
 
     if showEqZone
-        eqBox.set_top_left_point(    chart.point.new(trailing.barTime, na, eqTop))
-        eqBox.set_bottom_right_point(chart.point.new(rightTimeBar,     na, eqBottom))
+        eqBox.set_top_left_point(    chart.point.new(leftBar,   na, eqTop))
+        eqBox.set_bottom_right_point(chart.point.new(rightBar,  na, eqBottom))
         eqBox.set_bgcolor(zoneColor)
-        eqLblZone.set_point(chart.point.new(na, midBarIndex, eqMid))
-        eqLblTop.set_point( chart.point.new(rightTimeBar, na, eqTop))
-        eqLblBot.set_point( chart.point.new(rightTimeBar, na, eqBottom))
+        eqBox.set_border_color(borderColor)
+        eqBox.set_border_width(1)
+        eqBox.set_border_style(line.style_solid)
+        eqLblZone.set_point(chart.point.new(na, midBarIdx, eqMid))
+        eqLblTop.set_point( chart.point.new(rightBar, na, eqTop))
+        eqLblBot.set_point( chart.point.new(rightBar, na, eqBottom))
         eqLblTop.set_text(str.tostring(math.round(eqTop,    3)))
         eqLblBot.set_text(str.tostring(math.round(eqBottom, 3)))
 
     if showFibZone
-        z2Box.set_top_left_point(    chart.point.new(trailing.barTime, na, z2Top))
-        z2Box.set_bottom_right_point(chart.point.new(rightTimeBar,     na, z2Bottom))
+        z2Box.set_top_left_point(    chart.point.new(leftBar,  na, z2Top))
+        z2Box.set_bottom_right_point(chart.point.new(rightBar, na, z2Bottom))
         z2Box.set_bgcolor(zoneColor)
-        z2LblZone.set_point(chart.point.new(na, midBarIndex, z2Mid))
-        z2LblTop.set_point( chart.point.new(rightTimeBar, na, z2Top))
-        z2LblBot.set_point( chart.point.new(rightTimeBar, na, z2Bottom))
+        z2Box.set_border_color(borderColor)
+        z2Box.set_border_width(1)
+        z2Box.set_border_style(line.style_solid)
+        z2LblZone.set_point(chart.point.new(na, midBarIdx, z2Mid))
+        z2LblTop.set_point( chart.point.new(rightBar, na, z2Top))
+        z2LblBot.set_point( chart.point.new(rightBar, na, z2Bottom))
         z2LblTop.set_text(not na(z2Top)    ? str.tostring(math.round(z2Top,    3)) : '')
         z2LblBot.set_text(not na(z2Bottom) ? str.tostring(math.round(z2Bottom, 3)) : '')
 
-// FIX #3: Full 13-row 4-column dashboard matching Matary structure
-// FIX #4: Trend filter wired to ALLOW/BLOCK per direction
-// FIX #6: Footer shows which zone(s) triggered BR1/BR2
+//---------------------------------------------------------------------------------------------------------------------}
+// ENTRY FRAMEWORK
+//---------------------------------------------------------------------------------------------------------------------{
+var bool   inTrade     = false
+var float  entryPrice  = na
+var float  slPrice     = na
+var float  tp1Price    = na
+var float  tp2Price    = na
+var float  tp3Price    = na
+var string tradeDir    = ''
+var bool   beTriggered = false
+var int    setupBar    = na
 
-// Dashboard constants and objects at global scope
-// (Pine v5 does not allow nested functions or var table inside functions)
+calcEntryLevels(bool isBuy, float en, float sl) =>
+    float risk = math.abs(en - sl)
+    float tp1  = isBuy ? en + risk       : en - risk
+    float tp2  = isBuy ? en + risk * 2.0 : en - risk * 2.0
+    float tp3  = isBuy ? en + risk * 3.0 : en - risk * 3.0
+    [tp1, tp2, tp3, risk]
+
+drawEntryLabels(float en, float sl, float tp1, float tp2, float tp3, string dir) =>
+    int rt        = last_bar_time + 20 * (time - time[1])
+    color enColor = dir == 'BUY' ? color.new(#089981, 0) : color.new(#F23645, 0)
+    label.new(chart.point.new(rt, na, en),  'EN: '  + str.tostring(en,  '#.###'), xloc.bar_time, color = enColor,              textcolor = color.white, style = label.style_label_right, size = size.small)
+    label.new(chart.point.new(rt, na, sl),  'SL: '  + str.tostring(sl,  '#.###'), xloc.bar_time, color = color.new(#F23645,0), textcolor = color.white, style = label.style_label_right, size = size.small)
+    label.new(chart.point.new(rt, na, tp1), 'TP1: ' + str.tostring(tp1, '#.###'), xloc.bar_time, color = color.new(#089981,0), textcolor = color.white, style = label.style_label_right, size = size.small)
+    label.new(chart.point.new(rt, na, tp2), 'TP2: ' + str.tostring(tp2, '#.###'), xloc.bar_time, color = color.new(#089981,0), textcolor = color.white, style = label.style_label_right, size = size.small)
+    label.new(chart.point.new(rt, na, tp3), 'TP3: ' + str.tostring(tp3, '#.###'), xloc.bar_time, color = color.new(#089981,0), textcolor = color.white, style = label.style_label_right, size = size.small)
+
+checkEntryTrigger(bool isBuy, float zoneTop, float zoneBot) =>
+    bool triggered = false
+    if entryTrigger == 'Price Touch'
+        triggered := isBuy ? (low <= zoneTop and low >= zoneBot) : (high >= zoneBot and high <= zoneTop)
+    else
+        triggered := close <= zoneTop and close >= zoneBot
+    triggered
+
+//---------------------------------------------------------------------------------------------------------------------}
+// DASHBOARD
+//---------------------------------------------------------------------------------------------------------------------{
 color D_HDR   = color.new(#1a1a2e, 0)
 color D_BG    = color.new(#0d0d1a, 0)
 color D_GREEN = color.new(#089981, 0)
@@ -345,188 +332,185 @@ var table dash = table.new(
      frame_color  = color.new(color.gray, 30),
      frame_width  = 1)
 
-// Top-level cell writer — must be at global scope, not nested inside drawDashboard
 tc(int row, int col, string txt, color bg, color fg, string sz) =>
     table.cell(dash, col, row, txt, bgcolor = bg, text_color = fg, text_size = sz)
 
-drawDashboard(bool sideways,
-              bool z1fb, bool z1fs, bool z2fb, bool z2fs,
-              float eqT, float eqB, float z2T, float z2B) =>
-
-    // ── Row 0: Header ──────────────────────────────────────
-    tc(0, 0, 'SMC-MatLux', D_HDR, D_WHITE, size.small)
-    tc(0, 1, 'STATUS',     D_HDR, D_WHITE, size.small)
-    tc(0, 2, 'BUY',        D_HDR, D_GREEN, size.small)
-    tc(0, 3, 'SELL',       D_HDR, D_RED,   size.small)
+drawDashboard(bool sideways, bool z1u, bool z2u, float eqT, float eqB, float z2T, float z2B) =>
+    // ── Row 0: Header ──
+    tc(0, 0, 'SMC-MatLux', D_HDR, D_WHITE, size.normal)
+    tc(0, 1, 'STATUS',     D_HDR, D_WHITE, size.normal)
+    tc(0, 2, 'BUY',        D_HDR, D_GREEN, size.normal)
+    tc(0, 3, 'SELL',       D_HDR, D_RED,   size.normal)
 
     if sideways
-        // ── Sideways: keep all row labels visible, collapse BUY/SELL to INVALID ──
-        tc(1, 0, '⚠ Sideways', D_BG, D_YLW, size.small)
-        tc(1, 1, 'Detected',   D_BG, D_YLW, size.small)
-        tc(1, 2, 'WAIT',       D_BG, D_YLW, size.small)
-        tc(1, 3, 'WAIT',       D_BG, D_YLW, size.small)
+        tc(1, 0, '⚠ Sideways', D_BG, D_YLW, size.normal)
+        tc(1, 1, 'Detected',   D_BG, D_YLW, size.normal)
+        tc(1, 2, 'WAIT',       D_BG, D_YLW, size.normal)
+        tc(1, 3, 'WAIT',       D_BG, D_YLW, size.normal)
 
-        // Same row labels as the active branch below — only the BUY/SELL
-        // verdict columns collapse to INVALID, the left-hand labels stay
-        // visible so the dashboard layout doesn't appear to "lose" rows
-        tc(2, 0, '● Swing Bias',       D_BG, D_WHITE, size.tiny)
-        tc(2, 1, '',                   D_BG, D_WHITE, size.tiny)
-        tc(2, 2, 'INVALID', D_BG, D_GRAY, size.tiny)
-        tc(2, 3, 'INVALID', D_BG, D_GRAY, size.tiny)
+        tc(2, 0, '● Swing Bias',       D_BG, D_WHITE, size.small)
+        tc(2, 1, '',                   D_BG, D_WHITE, size.small)
+        tc(2, 2, 'INVALID', D_BG, D_GRAY, size.small)
+        tc(2, 3, 'INVALID', D_BG, D_GRAY, size.small)
 
-        tc(3, 0, '── ZN 2 ──', D_HDR, D_WHITE, size.tiny)
-        tc(3, 1, '',           D_HDR, D_WHITE, size.tiny)
-        tc(3, 2, 'BUY',        D_HDR, D_GREEN, size.tiny)
-        tc(3, 3, 'SELL',       D_HDR, D_RED,   size.tiny)
+        tc(3, 0, '── ZN 1 ──', D_HDR, D_WHITE, size.small)
+        tc(3, 1, '',           D_HDR, D_WHITE, size.small)
+        tc(3, 2, 'BUY',        D_HDR, D_GREEN, size.small)
+        tc(3, 3, 'SELL',       D_HDR, D_RED,   size.small)
 
-        tc(4, 0, '✓ Zone ZN2 Formed', D_BG, D_WHITE, size.tiny)
-        tc(4, 1, '',                  D_BG, D_WHITE, size.tiny)
-        tc(4, 2, 'INVALID', D_BG, D_GRAY, size.tiny)
-        tc(4, 3, 'INVALID', D_BG, D_GRAY, size.tiny)
+        tc(4, 0, '✓ Zone ZN1 Formed', D_BG, D_WHITE, size.small)
+        tc(4, 1, '',                  D_BG, D_WHITE, size.small)
+        tc(4, 2, 'INVALID', D_BG, D_GRAY, size.small)
+        tc(4, 3, 'INVALID', D_BG, D_GRAY, size.small)
 
-        tc(5, 0, '● Waiting ZN2', D_BG, D_WHITE, size.tiny)
-        tc(5, 1, '',              D_BG, D_WHITE, size.tiny)
-        tc(5, 2, 'INVALID', D_BG, D_GRAY, size.tiny)
-        tc(5, 3, 'INVALID', D_BG, D_GRAY, size.tiny)
+        tc(5, 0, '● Waiting ZN1', D_BG, D_WHITE, size.small)
+        tc(5, 1, '',              D_BG, D_WHITE, size.small)
+        tc(5, 2, 'INVALID', D_BG, D_GRAY, size.small)
+        tc(5, 3, 'INVALID', D_BG, D_GRAY, size.small)
 
-        tc(6, 0, '● Freshness ZN2', D_BG, D_WHITE, size.tiny)
-        tc(6, 1, '',                D_BG, D_WHITE, size.tiny)
-        tc(6, 2, 'INVALID', D_BG, D_GRAY, size.tiny)
-        tc(6, 3, 'INVALID', D_BG, D_GRAY, size.tiny)
+        tc(6, 0, '● Freshness ZN1', D_BG, D_WHITE, size.small)
+        tc(6, 1, '',                D_BG, D_WHITE, size.small)
+        tc(6, 2, 'INVALID', D_BG, D_GRAY, size.small)
+        tc(6, 3, 'INVALID', D_BG, D_GRAY, size.small)
 
-        tc(7, 0, '▶ ZONA STATUS', D_BG, D_WHITE, size.tiny)
-        tc(7, 1, '',              D_BG, D_WHITE, size.tiny)
-        tc(7, 2, 'INVALID', D_BG, D_GRAY, size.tiny)
-        tc(7, 3, 'INVALID', D_BG, D_GRAY, size.tiny)
+        tc(7, 0, '▶ ZONA STATUS', D_BG, D_WHITE, size.small)
+        tc(7, 1, '',              D_BG, D_WHITE, size.small)
+        tc(7, 2, 'INVALID', D_BG, D_GRAY, size.small)
+        tc(7, 3, 'INVALID', D_BG, D_GRAY, size.small)
 
-        tc(8, 0, '── ZN 1 ──', D_HDR, D_WHITE, size.tiny)
-        tc(8, 1, '',           D_HDR, D_WHITE, size.tiny)
-        tc(8, 2, 'BUY',        D_HDR, D_GREEN, size.tiny)
-        tc(8, 3, 'SELL',       D_HDR, D_RED,   size.tiny)
+        tc(8, 0, '── ZN 2 ──', D_HDR, D_WHITE, size.small)
+        tc(8, 1, '',           D_HDR, D_WHITE, size.small)
+        tc(8, 2, 'BUY',        D_HDR, D_GREEN, size.small)
+        tc(8, 3, 'SELL',       D_HDR, D_RED,   size.small)
 
-        tc(9, 0, '✓ Zone ZN1 Formed', D_BG, D_WHITE, size.tiny)
-        tc(9, 1, '',                  D_BG, D_WHITE, size.tiny)
-        tc(9, 2, 'INVALID', D_BG, D_GRAY, size.tiny)
-        tc(9, 3, 'INVALID', D_BG, D_GRAY, size.tiny)
+        tc(9, 0, '✓ Zone ZN2 Formed', D_BG, D_WHITE, size.small)
+        tc(9, 1, '',                  D_BG, D_WHITE, size.small)
+        tc(9, 2, 'INVALID', D_BG, D_GRAY, size.small)
+        tc(9, 3, 'INVALID', D_BG, D_GRAY, size.small)
 
-        tc(10, 0, '● Waiting ZN1', D_BG, D_WHITE, size.tiny)
-        tc(10, 1, '',              D_BG, D_WHITE, size.tiny)
-        tc(10, 2, 'INVALID', D_BG, D_GRAY, size.tiny)
-        tc(10, 3, 'INVALID', D_BG, D_GRAY, size.tiny)
+        tc(10, 0, '● Waiting ZN2', D_BG, D_WHITE, size.small)
+        tc(10, 1, '',              D_BG, D_WHITE, size.small)
+        tc(10, 2, 'INVALID', D_BG, D_GRAY, size.small)
+        tc(10, 3, 'INVALID', D_BG, D_GRAY, size.small)
 
-        tc(11, 0, '● Freshness ZN1', D_BG, D_WHITE, size.tiny)
-        tc(11, 1, '',                D_BG, D_WHITE, size.tiny)
-        tc(11, 2, 'INVALID', D_BG, D_GRAY, size.tiny)
-        tc(11, 3, 'INVALID', D_BG, D_GRAY, size.tiny)
+        tc(11, 0, '● Freshness ZN2', D_BG, D_WHITE, size.small)
+        tc(11, 1, '',                D_BG, D_WHITE, size.small)
+        tc(11, 2, 'INVALID', D_BG, D_GRAY, size.small)
+        tc(11, 3, 'INVALID', D_BG, D_GRAY, size.small)
 
-        tc(12, 0, '⏳ WAIT',     color.new(D_YLW, 70), D_YLW, size.small)
-        tc(12, 1, 'BREAK SWING', color.new(D_YLW, 70), D_YLW, size.small)
+        tc(12, 0, '⏳ WAIT',     color.new(D_YLW, 70), D_YLW,  size.normal)
+        tc(12, 1, 'BREAK SWING', color.new(D_YLW, 70), D_YLW,  size.normal)
         tc(12, 2, '',            color.new(D_YLW, 70), D_WHITE, size.small)
         tc(12, 3, '',            color.new(D_YLW, 70), D_WHITE, size.small)
 
     else
-        // ── Row 1: Trend EMA ────────────────────────────────
-        // FIX #4: trendAllowBuy/Sell computed globally, wired here
-        tc(1, 0, '● Trend EMA', D_BG, D_WHITE, size.tiny)
-        tc(1, 1, '',            D_BG, D_WHITE, size.tiny)
-        tc(1, 2, trendAllowBuy  ? 'ALLOW ✓' : 'BLOCK ✗', D_BG, trendAllowBuy  ? D_GREEN : D_RED, size.tiny)
-        tc(1, 3, trendAllowSell ? 'ALLOW ✓' : 'BLOCK ✗', D_BG, trendAllowSell ? D_GREEN : D_RED, size.tiny)
+        // ── Row 1: Trend EMA ──
+        tc(1, 0, '● Trend EMA', D_BG, D_WHITE, size.small)
+        tc(1, 1, '',            D_BG, D_WHITE, size.small)
+        tc(1, 2, trendAllowBuy  ? 'ALLOW ✓' : 'BLOCK ✗', D_BG, trendAllowBuy  ? D_GREEN : D_RED, size.small)
+        tc(1, 3, trendAllowSell ? 'ALLOW ✓' : 'BLOCK ✗', D_BG, trendAllowSell ? D_GREEN : D_RED, size.small)
 
-        // ── Row 2: Swing Bias (placeholder — logic in future version) ──
-        color  biasBuyC = swingTrend.bias == BULLISH ? D_GREEN : D_GRAY
-        color  biasSellC = swingTrend.bias == BEARISH ? D_GREEN : D_GRAY
-        tc(2, 0, '● Swing Bias', D_BG, D_WHITE, size.tiny)
-        tc(2, 1, '',             D_BG, D_WHITE, size.tiny)
-        tc(2, 2, swingTrend.bias == BULLISH ? 'BULLISH ✓' : 'BEARISH ✗', D_BG, biasBuyC,  size.tiny)
-        tc(2, 3, swingTrend.bias == BEARISH ? 'BEARISH ✓' : 'BULLISH ✗', D_BG, biasSellC, size.tiny)
+        // ── Row 2: Swing Bias ──
+        color biasBuyC  = swingTrend.bias == BULLISH ? D_GREEN : D_GRAY
+        color biasSellC = swingTrend.bias == BEARISH ? D_GREEN : D_GRAY
+        tc(2, 0, '● Swing Bias', D_BG, D_WHITE, size.small)
+        tc(2, 1, '',             D_BG, D_WHITE, size.small)
+        tc(2, 2, swingTrend.bias == BULLISH ? 'BULLISH ✓' : 'BEARISH ✗', D_BG, biasBuyC,  size.small)
+        tc(2, 3, swingTrend.bias == BEARISH ? 'BEARISH ✓' : 'BULLISH ✗', D_BG, biasSellC, size.small)
 
-        // ── Row 3: BR 2 section header (Zone 1 / Equilibrium) ──
-        tc(3, 0, '── ZN 2 ──', D_HDR, D_WHITE, size.tiny)
-        tc(3, 1, '',           D_HDR, D_WHITE, size.tiny)
-        tc(3, 2, 'BUY',        D_HDR, D_GREEN, size.tiny)
-        tc(3, 3, 'SELL',       D_HDR, D_RED,   size.tiny)
+        // ── Row 3: ZN1 section header ──
+        tc(3, 0, '── ZN 1 ──', D_HDR, D_WHITE, size.small)
+        tc(3, 1, '',           D_HDR, D_WHITE, size.small)
+        tc(3, 2, 'BUY',        D_HDR, D_GREEN, size.small)
+        tc(3, 3, 'SELL',       D_HDR, D_RED,   size.small)
 
-        bool z1Formed = not na(eqT) and not na(eqB)
+        bool z1Formed     = not na(eqT) and not na(eqB)
+        bool z1IsBuySetup = z1Formed and zoneState == 1
+        bool z1IsSelSetup = z1Formed and zoneState == -1
 
-        // ── Row 4: Zona BR2 formed ──────────────────────────
-        tc(4, 0, '✓ Zone ZN2 Formed', D_BG, D_WHITE, size.tiny)
-        tc(4, 1, '',                  D_BG, D_WHITE, size.tiny)
-        tc(4, 2, z1Formed ? 'OK ✓' : 'NO ✗', D_BG, z1Formed ? D_GREEN : D_RED, size.tiny)
-        tc(4, 3, z1Formed ? 'OK ✓' : 'NO ✗', D_BG, z1Formed ? D_GREEN : D_RED, size.tiny)
+        // ── Row 4: Zone ZN1 formed ──
+        tc(4, 0, '✓ Zone ZN1 Formed', D_BG, D_WHITE, size.small)
+        tc(4, 1, '',                  D_BG, D_WHITE, size.small)
+        tc(4, 2, z1Formed ? 'OK ✓' : 'NO ✗', D_BG, z1Formed ? D_GREEN : D_RED, size.small)
+        tc(4, 3, z1Formed ? 'OK ✓' : 'NO ✗', D_BG, z1Formed ? D_GREEN : D_RED, size.small)
 
-        // Waiting: price not yet inside zone, approaching from correct direction
-        // BUY  setup → zone is below current price → close > eqTop  (price above, will retrace down)
-        // SELL setup → zone is above current price → close < eqBottom (price below, will retrace up)
-        bool z1WaitBuy  = z1Formed and close > eqT
-        bool z1WaitSell = z1Formed and close < eqB
+        // Waiting: price above zone top (approaching from above) = BUY setup waiting
+        //          price below zone bot (approaching from below) = SELL setup waiting
+        bool z1WaitBuy = z1IsBuySetup and close > eqT
+        bool z1WaitSel = z1IsSelSetup and close < eqB
 
-        // ── Row 5: Waiting Entry BR2 ────────────────────────
-        tc(5, 0, '● Waiting ZN2', D_BG, D_WHITE, size.tiny)
-        tc(5, 1, '',              D_BG, D_WHITE, size.tiny)
-        tc(5, 2, z1WaitBuy  ? 'WAITING ✓' : 'DONE/NO ✗', D_BG, z1WaitBuy  ? D_GREEN : D_RED, size.tiny)
-        tc(5, 3, z1WaitSell ? 'WAITING ✓' : 'DONE/NO ✗', D_BG, z1WaitSell ? D_GREEN : D_RED, size.tiny)
+        // ── Row 5: Waiting ZN1 ──
+        tc(5, 0, '● Waiting ZN1', D_BG, D_WHITE, size.small)
+        tc(5, 1, '',              D_BG, D_WHITE, size.small)
+        tc(5, 2, z1IsBuySetup ? (z1WaitBuy ? 'WAITING ✓' : 'DONE/NO ✗') : '🔴 Invalid', D_BG, z1IsBuySetup ? (z1WaitBuy ? D_GREEN : D_RED) : D_RED, size.small)
+        tc(5, 3, z1IsSelSetup ? (z1WaitSel ? 'WAITING ✓' : 'DONE/NO ✗') : '🔴 Invalid', D_BG, z1IsSelSetup ? (z1WaitSel ? D_GREEN : D_RED) : D_RED, size.small)
 
-        // ── Row 6: Freshness BR2 ────────────────────────────
-        // FIX #1/#2: uses directional flags z1fb (bull) and z1fs (bear)
-        tc(6, 0, '● Freshness ZN2', D_BG, D_WHITE, size.tiny)
-        tc(6, 1, '',                D_BG, D_WHITE, size.tiny)
-        tc(6, 2, z1fb ? '🟢 Fresh' : '🟡 Used', D_BG, z1fb ? D_GREEN : D_YLW, size.tiny)
-        tc(6, 3, z1fs ? '🟢 Fresh' : '🟡 Used', D_BG, z1fs ? D_GREEN : D_YLW, size.tiny)
+        // ── Row 6: Freshness ZN1 ──
+        tc(6, 0, '● Freshness ZN1', D_BG, D_WHITE, size.small)
+        tc(6, 1, '',                D_BG, D_WHITE, size.small)
+        tc(6, 2, z1IsBuySetup ? (z1u ? '🟡 Used' : '🟢 Fresh') : '🔴 Invalid', D_BG, z1IsBuySetup ? (z1u ? D_YLW : D_GREEN) : D_RED, size.small)
+        tc(6, 3, z1IsSelSetup ? (z1u ? '🟡 Used' : '🟢 Fresh') : '🔴 Invalid', D_BG, z1IsSelSetup ? (z1u ? D_YLW : D_GREEN) : D_RED, size.small)
 
-        // Zona Status BR2: all conditions must pass per direction
-        bool z1ValidBuy  = z1Formed and z1WaitBuy  and z1fb and trendAllowBuy
-        bool z1ValidSell = z1Formed and z1WaitSell and z1fs and trendAllowSell
+        bool z1ValidBuy = z1IsBuySetup and z1WaitBuy and not z1u and trendAllowBuy
+        bool z1ValidSel = z1IsSelSetup and z1WaitSel and not z1u and trendAllowSell
 
-        // ── Row 7: Zona Status BR2 ──────────────────────────
-        tc(7, 0, '▶ ZONA STATUS', D_BG, D_WHITE, size.tiny)
-        tc(7, 1, '',              D_BG, D_WHITE, size.tiny)
-        tc(7, 2, z1ValidBuy  ? 'VALID' : 'INVALID', D_BG, z1ValidBuy  ? D_GREEN : D_GRAY, size.tiny)
-        tc(7, 3, z1ValidSell ? 'VALID' : 'INVALID', D_BG, z1ValidSell ? D_GREEN : D_GRAY, size.tiny)
+        // ── Row 7: Zona Status ZN1 ──
+        tc(7, 0, '▶ ZONA STATUS', D_BG, D_WHITE, size.small)
+        tc(7, 1, '',              D_BG, D_WHITE, size.small)
+        tc(7, 2, z1ValidBuy ? 'VALID' : 'INVALID', D_BG, z1ValidBuy ? D_GREEN : D_GRAY, size.small)
+        tc(7, 3, z1ValidSel ? 'VALID' : 'INVALID', D_BG, z1ValidSel ? D_GREEN : D_GRAY, size.small)
 
-        // ── Row 8: BR 1 section header (Zone 2 / Fibonacci) ──
-        tc(8, 0, '── ZN 1 ──', D_HDR, D_WHITE, size.tiny)
-        tc(8, 1, '',           D_HDR, D_WHITE, size.tiny)
-        tc(8, 2, 'BUY',        D_HDR, D_GREEN, size.tiny)
-        tc(8, 3, 'SELL',       D_HDR, D_RED,   size.tiny)
+        // ── Row 8: ZN2 section header ──
+        tc(8, 0, '── ZN 2 ──', D_HDR, D_WHITE, size.small)
+        tc(8, 1, '',           D_HDR, D_WHITE, size.small)
+        tc(8, 2, 'BUY',        D_HDR, D_GREEN, size.small)
+        tc(8, 3, 'SELL',       D_HDR, D_RED,   size.small)
 
-        bool z2Formed = not na(z2T) and not na(z2B)
+        bool z2Formed     = not na(z2T) and not na(z2B)
+        bool z2IsBuySetup = z2Formed and zoneState == 1
+        bool z2IsSelSetup = z2Formed and zoneState == -1
 
-        // ── Row 9: Zona BR1 formed ──────────────────────────
-        tc(9, 0, '✓ Zone ZN1 Formed', D_BG, D_WHITE, size.tiny)
-        tc(9, 1, '',                  D_BG, D_WHITE, size.tiny)
-        tc(9, 2, z2Formed ? 'OK ✓' : 'NO ✗', D_BG, z2Formed ? D_GREEN : D_RED, size.tiny)
-        tc(9, 3, z2Formed ? 'OK ✓' : 'NO ✗', D_BG, z2Formed ? D_GREEN : D_RED, size.tiny)
+        // ── Row 9: Zone ZN2 formed ──
+        tc(9, 0, '✓ Zone ZN2 Formed', D_BG, D_WHITE, size.small)
+        tc(9, 1, '',                  D_BG, D_WHITE, size.small)
+        tc(9, 2, z2Formed ? 'OK ✓' : 'NO ✗', D_BG, z2Formed ? D_GREEN : D_RED, size.small)
+        tc(9, 3, z2Formed ? 'OK ✓' : 'NO ✗', D_BG, z2Formed ? D_GREEN : D_RED, size.small)
 
-        bool z2WaitBuy  = z2Formed and close > z2T
-        bool z2WaitSell = z2Formed and close < z2B
+        bool z2WaitBuy = z2IsBuySetup and close > z2T
+        bool z2WaitSel = z2IsSelSetup and close < z2B
 
-        // ── Row 10: Waiting Entry BR1 ───────────────────────
-        tc(10, 0, '● Waiting ZN1', D_BG, D_WHITE, size.tiny)
-        tc(10, 1, '',              D_BG, D_WHITE, size.tiny)
-        tc(10, 2, z2WaitBuy  ? 'WAITING ✓' : 'DONE/NO ✗', D_BG, z2WaitBuy  ? D_GREEN : D_RED, size.tiny)
-        tc(10, 3, z2WaitSell ? 'WAITING ✓' : 'DONE/NO ✗', D_BG, z2WaitSell ? D_GREEN : D_RED, size.tiny)
+        // ── Row 10: Waiting ZN2 ──
+        tc(10, 0, '● Waiting ZN2', D_BG, D_WHITE, size.small)
+        tc(10, 1, '',              D_BG, D_WHITE, size.small)
+        tc(10, 2, z2IsBuySetup ? (z2WaitBuy ? 'WAITING ✓' : 'DONE/NO ✗') : '🔴 Invalid', D_BG, z2IsBuySetup ? (z2WaitBuy ? D_GREEN : D_RED) : D_RED, size.small)
+        tc(10, 3, z2IsSelSetup ? (z2WaitSel ? 'WAITING ✓' : 'DONE/NO ✗') : '🔴 Invalid', D_BG, z2IsSelSetup ? (z2WaitSel ? D_GREEN : D_RED) : D_RED, size.small)
 
-        // ── Row 11: Freshness BR1 ───────────────────────────
-        // FIX #1/#2: uses directional flags z2fb (bull) and z2fs (bear)
-        tc(11, 0, '● Freshness ZN1', D_BG, D_WHITE, size.tiny)
-        tc(11, 1, '',                D_BG, D_WHITE, size.tiny)
-        tc(11, 2, z2fb ? '🟢 Fresh' : '🟡 Used', D_BG, z2fb ? D_GREEN : D_YLW, size.tiny)
-        tc(11, 3, z2fs ? '🟢 Fresh' : '🟡 Used', D_BG, z2fs ? D_GREEN : D_YLW, size.tiny)
+        // ── Row 11: Freshness ZN2 ──
+        tc(11, 0, '● Freshness ZN2', D_BG, D_WHITE, size.small)
+        tc(11, 1, '',                D_BG, D_WHITE, size.small)
+        tc(11, 2, z2IsBuySetup ? (z2u ? '🟡 Used' : '🟢 Fresh') : '🔴 Invalid', D_BG, z2IsBuySetup ? (z2u ? D_YLW : D_GREEN) : D_RED, size.small)
+        tc(11, 3, z2IsSelSetup ? (z2u ? '🟡 Used' : '🟢 Fresh') : '🔴 Invalid', D_BG, z2IsSelSetup ? (z2u ? D_YLW : D_GREEN) : D_RED, size.small)
 
-        bool z2ValidBuy  = z2Formed and z2WaitBuy  and z2fb and trendAllowBuy
-        bool z2ValidSell = z2Formed and z2WaitSell and z2fs and trendAllowSell
+        bool z2ValidBuy = z2IsBuySetup and z2WaitBuy and not z2u and trendAllowBuy
+        bool z2ValidSel = z2IsSelSetup and z2WaitSel and not z2u and trendAllowSell
 
-        // ── Row 12: Footer action bar ───────────────────────
-        // FIX #6: Footer shows which zone(s) triggered with BR1/BR2 text
-        bool readyBuy  = z1ValidBuy  or z2ValidBuy
-        bool readySell = z1ValidSell or z2ValidSell
+        // ── Row 12: Footer action bar ──
+        bool readyBuy  = z1ValidBuy or z2ValidBuy
+        bool readySell = z1ValidSel or z2ValidSel
+
+        bool bothUsed = z1u and z2u
 
         string fAction = '⏳ WAIT'
         string fStatus = 'WAITING'
         color  fBG     = D_BG
         color  fTC     = D_GRAY
 
-        if readySell and not readyBuy
+        if bothUsed
+            fAction := '⏳ WAIT'
+            fStatus := 'BREAK SWING'
+            fBG     := color.new(D_YLW, 70)
+            fTC     := D_YLW
+        else if readySell and not readyBuy
             fAction := '🔴 SELL'
             fStatus := 'READY ENTRY'
             fBG     := color.new(D_RED, 60)
@@ -542,46 +526,51 @@ drawDashboard(bool sideways,
             fBG     := color.new(D_YLW, 60)
             fTC     := D_YLW
 
-        // Which zone(s) are valid — for action text
         string fZones = ''
         if readySell
-            fZones := z1ValidSell and z2ValidSell ? 'BR1 & BR2' : z1ValidSell ? 'BR2' : 'BR1'
+            fZones := z1ValidSel and z2ValidSel ? 'ZN1 & ZN2' : z1ValidSel ? 'ZN1' : 'ZN2'
         else if readyBuy
-            fZones := z1ValidBuy and z2ValidBuy ? 'BR1 & BR2' : z1ValidBuy ? 'BR2' : 'BR1'
+            fZones := z1ValidBuy and z2ValidBuy ? 'ZN1 & ZN2' : z1ValidBuy ? 'ZN1' : 'ZN2'
 
         string fTxt = (readyBuy or readySell) ? 'Retest ' + (readySell ? 'SELL' : 'BUY') + ' ' + fZones : ''
 
-        tc(12, 0, fAction, fBG, fTC,     size.small)
-        tc(12, 1, fStatus, fBG, fTC,     size.small)
-        tc(12, 2, fTxt,    fBG, D_WHITE, size.tiny)
-        tc(12, 3, '',      fBG, D_WHITE, size.tiny)
+        tc(12, 0, fAction, fBG, fTC,     size.normal)
+        tc(12, 1, fStatus, fBG, fTC,     size.normal)
+        tc(12, 2, fTxt,    fBG, D_WHITE, size.small)
+        tc(12, 3, '',      fBG, D_WHITE, size.small)
 
 //---------------------------------------------------------------------------------------------------------------------}
 // EXECUTION
 //---------------------------------------------------------------------------------------------------------------------{
-// Step 1: Check dashed line breaks using PREVIOUS bar's levels (before updateTrailingExtremes moves them)
-if not na(prevTrailingTop) and not na(prevTrailingBot)
-    if close > prevTrailingTop
-        zoneState := 1
-    else if close < prevTrailingBot
-        zoneState := -1
-
-// Step 2: Update trailing extremes + draw dashed lines
+// Step 1: Update trailing extremes and draw dashed swing lines
 updateTrailingExtremes()
 drawHighLowSwings()
 
-// Step 3: Store current levels for next bar's break check
-prevTrailingTop := trailing.top
-prevTrailingBot := trailing.bottom
-
-// Step 4: Compute zone boundaries at global scope (needed for freshness + dashboard)
+// Step 2: Compute zone boundaries from current trailing extremes
 float eqTop    = not na(trailing.top) and not na(trailing.bottom) ? 0.525 * trailing.top + 0.475 * trailing.bottom : na
 float eqBottom = not na(trailing.top) and not na(trailing.bottom) ? 0.525 * trailing.bottom + 0.475 * trailing.top : na
 float priceRange = not na(trailing.top) and not na(trailing.bottom) ? trailing.top - trailing.bottom : na
 
-// FIX #7: Zone 2 fib levels computed cleanly without multi-declaration
 float fib_618 = na
 float fib_786 = na
+
+// Step 3: Detect swing structure pivots
+[newSwing, swingWasLow] = getCurrentStructure(swingLength)
+
+// FIXED: Removed the 'if newSwing' block that was resetting snapshots to 'na' when a swing pivot was confirmed.
+// The active setup should remain valid until a new structure break (BOS/CHoCH) occurs.
+
+// Step 4: Detect breaks and update bias
+[bullFiredNow, bearFiredNow] = displaySwingStructure()
+bullBreakFiredThisBar := bullFiredNow
+bearBreakFiredThisBar := bearFiredNow
+
+if swingTrend.bias == BULLISH
+    zoneState := 1
+else if swingTrend.bias == BEARISH
+    zoneState := -1
+
+// Step 5: Compute fib zone AFTER zoneState is set correctly
 if zoneState == 1 and not na(priceRange)
     fib_618 := trailing.top - 0.618 * priceRange
     fib_786 := trailing.top - 0.786 * priceRange
@@ -592,41 +581,121 @@ else if zoneState == -1 and not na(priceRange)
 float z2Top    = not na(fib_618) ? math.max(fib_618, fib_786) : na
 float z2Bottom = not na(fib_618) ? math.min(fib_618, fib_786) : na
 
-// Step 5: Swing structure (returns direction for freshness reset)
-// FIX #2: directional freshness reset — new swing high resets SELL side, new swing low resets BUY side
-[newSwing, swingWasLow] = getCurrentStructure(swingLength)
-if newSwing
-    if swingWasLow
-        // New swing low formed → BUY zone boundaries will shift → reset BUY freshness
-        z1FreshBull := true
-        z2FreshBull := true
-    else
-        // New swing high formed → SELL zone boundaries will shift → reset SELL freshness
-        z1FreshBear := true
-        z2FreshBear := true
+// Step 6: Snapshot zone boundaries on the break bar (and initialize state)
+if bullFiredNow or bearFiredNow
+    z1Used      := false
+    z2Used      := false
+    z1SnapTop   := eqTop
+    z1SnapBot   := eqBottom
+    z2SnapTop   := z2Top
+    z2SnapBot   := z2Bottom
+    snapBar     := bar_index
+    inTrade     := false
+    beTriggered := false
+    entryPrice  := na
+    slPrice     := na
+    tp1Price    := na
+    tp2Price    := na
+    tp3Price    := na
+    tradeDir    := ''
+    setupBar    := na
 
-[bullFiredNow, bearFiredNow] = displaySwingStructure()
-bullBreakFiredThisBar := bullFiredNow
-bearBreakFiredThisBar := bearFiredNow
+// FIXED: Dynamic tracking of snapshots. 
+// Allows zone snapshots to dynamically expand and track the visual zone boundaries as the swing leg forms.
+// Once a zone is retested, tracking freezes at that bar's snapshot.
+if not na(snapBar) and bar_index > snapBar
+    if not z1Used
+        z1SnapTop := eqTop
+        z1SnapBot := eqBottom
+    if not z2Used
+        z2SnapTop := z2Top
+        z2SnapBot := z2Bottom
 
-// Step 6: Freshness invalidation
-// Use close[1] (previous confirmed bar close) — prevents real-time flashing on the live bar
-// where price may wick into the zone and pull back before candle closes
-if not na(eqTop) and not na(eqBottom)
-    if close[1] <= eqTop and close[1] >= eqBottom
-        z1FreshBull := false
-        z1FreshBear := false
+// Step 8: Entry framework
+bool canBuy  = (tradeDirection == 'Both' or tradeDirection == 'Buy')  and zoneState == 1  and trendAllowBuy
+bool canSell = (tradeDirection == 'Both' or tradeDirection == 'Sell') and zoneState == -1 and trendAllowSell
 
-if not na(z2Top) and not na(z2Bottom)
-    if close[1] <= z2Top and close[1] >= z2Bottom
-        z2FreshBull := false
-        z2FreshBear := false
+bool useZ1 = not z1Used and enableZ1Entry
+bool useZ2 = not z2Used and enableZ2Entry
 
-// Step 7: Removed — boundary-change freshness reset was redundant with Step 5
-// and caused a perpetual reset loop because updateTrailingExtremes() shifts
-// eqTop/eqBottom on almost every bar, making freshness impossible to invalidate.
+if not inTrade and setupBar != bar_index and useZ1 and (canBuy or canSell)
+    bool triggered = checkEntryTrigger(canBuy, z1SnapTop, z1SnapBot)
+    if triggered
+        float en  = canBuy ? z1SnapTop : z1SnapBot
+        float sl  = canBuy ? z1SnapBot : z1SnapTop
+        [tp1, tp2, tp3, _risk] = calcEntryLevels(canBuy, en, sl)
+        entryPrice  := en
+        slPrice     := sl
+        tp1Price    := tp1
+        tp2Price    := tp2
+        tp3Price    := tp3
+        tradeDir    := canBuy ? 'BUY' : 'SELL'
+        inTrade     := true
+        beTriggered := false
+        setupBar    := bar_index
+        if showEntryLabels
+            drawEntryLabels(en, sl, tp1, tp2, tp3, tradeDir)
 
-// Step 8: Zone color and draw
+if not inTrade and setupBar != bar_index and useZ2 and (canBuy or canSell)
+    bool triggered = checkEntryTrigger(canBuy, z2SnapTop, z2SnapBot)
+    if triggered
+        float en  = canBuy ? z2SnapTop : z2SnapBot
+        float sl  = canBuy ? z2SnapBot : z2SnapTop
+        [tp1, tp2, tp3, _risk] = calcEntryLevels(canBuy, en, sl)
+        entryPrice  := en
+        slPrice     := sl
+        tp1Price    := tp1
+        tp2Price    := tp2
+        tp3Price    := tp3
+        tradeDir    := canBuy ? 'BUY' : 'SELL'
+        inTrade     := true
+        beTriggered := false
+        setupBar    := bar_index
+        if showEntryLabels
+            drawEntryLabels(en, sl, tp1, tp2, tp3, tradeDir)
+
+// Breakeven
+if inTrade and not beTriggered
+    if tradeDir == 'BUY'  and high >= tp1Price
+        slPrice     := entryPrice
+        beTriggered := true
+    else if tradeDir == 'SELL' and low <= tp1Price
+        slPrice     := entryPrice
+        beTriggered := true
+
+// Trade completion
+if inTrade and bar_index > setupBar
+    bool slHit  = tradeDir == 'BUY'  ? low  <= slPrice   : high >= slPrice
+    bool tp3Hit = tradeDir == 'BUY'  ? high >= tp3Price  : low  <= tp3Price
+    if slHit or tp3Hit
+        inTrade     := false
+        beTriggered := false
+        entryPrice  := na
+        slPrice     := na
+        tp1Price    := na
+        tp2Price    := na
+        tp3Price    := na
+        tradeDir    := ''
+
+// Step 7: Freshness evaluation
+// FIXED: Evaluated using close and barstate.isconfirmed to check exactly when the candle closes.
+if not na(z1SnapTop) and not na(z1SnapBot) and not na(snapBar)
+    if bar_index > snapBar
+        if barstate.isconfirmed or not barstate.isrealtime
+            bool z1Inside   = close <= z1SnapTop and close >= z1SnapBot
+            bool z1Bypassed = zoneState == 1 ? close <= z1SnapBot : close >= z1SnapTop
+            if z1Inside or z1Bypassed
+                z1Used := true
+
+if not na(z2SnapTop) and not na(z2SnapBot) and not na(snapBar)
+    if bar_index > snapBar
+        if barstate.isconfirmed or not barstate.isrealtime
+            bool z2Inside   = close <= z2SnapTop and close >= z2SnapBot
+            bool z2Bypassed = zoneState == 1 ? close <= z2SnapBot : close >= z2SnapTop
+            if z2Inside or z2Bypassed
+                z2Used := true
+
+// Step 9: Zone color and draw
 color _zoneColor = eqZoneColorNeut
 if zoneState == 1
     _zoneColor := eqZoneColorBull
@@ -636,11 +705,9 @@ else if zoneState == -1
 if not na(trailing.top) and not na(trailing.bottom)
     drawZones(_zoneColor, eqTop, eqBottom, z2Top, z2Bottom)
 
-// Step 9: Dashboard
+// Step 10: Dashboard
 if showDashboard
-    drawDashboard(isSideways,
-                  z1FreshBull, z1FreshBear, z2FreshBull, z2FreshBear,
-                  eqTop, eqBottom, z2Top, z2Bottom)
+    drawDashboard(isSideways, z1Used, z2Used, eqTop, eqBottom, z2Top, z2Bottom)
 
 //---------------------------------------------------------------------------------------------------------------------}
 // ALERTS
