@@ -1,0 +1,410 @@
+// This work is derived from LuxAlgo Smart Money Concepts (CC BY-NC-SA 4.0)
+// © LuxAlgo | Modified and maintained by Bluefish
+// Indicator Name: SMC-Imperator
+// Version: 1.0.1.7
+// Written by: Qwen3.7-Plus
+// Owner: Bluefish
+//
+// REVISION NOTES v1.0.1.7:
+// - Implemented Dynamic Zones (removed fixed boundary logic from v1.0.1.6)
+// - Zones now move dynamically with new swing highs/lows
+// - Freshness checks against CURRENT zone levels (not locked levels)
+// - Kept structure change detection to reset freshness when new structure forms
+// - Zones behave like original Matary indicator - adaptive to market structure
+
+//@version=5
+indicator('SMC-Imperator', overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// ==========================================
+// 1. INPUTS
+// ==========================================
+grp_swings = "Swing High / Low"
+swingLength     = input.int(50, 'Swing Detection Length', minval=1, group=grp_swings, tooltip='Lookback bars for swing detection. Lower = more sensitive.')
+swingHighColor  = input.color(#F23645, 'Swing High Line Color (Red)', group=grp_swings)
+swingLowColor   = input.color(#089981, 'Swing Low Line Color (Green)', group=grp_swings)
+
+grp_zones = "Zones (ZN 1 & ZN 2)"
+showZones   = input.bool(true, 'Show Zones', group=grp_zones)
+znBullColor = input.color(color.new(#089981, 80), 'Bullish Zone Color (Green)', group=grp_zones)
+znBearColor = input.color(color.new(#F23645, 80), 'Bearish Zone Color (Red)', group=grp_zones)
+znNeutralColor = input.color(color.new(#878b94, 80), 'Neutral Zone Color (Gray)', group=grp_zones)
+
+grp_breaks = "Break of Structure (BoS / CHoCH)"
+bullBreakColor = input.color(#089981, 'Bullish Break Color (Green)', group=grp_breaks)
+bearBreakColor = input.color(#F23645, 'Bearish Break Color (Red)', group=grp_breaks)
+
+grp_dash = "Dashboard"
+showDashboard = input.bool(true, 'Show Dashboard', group=grp_dash)
+dashPosition  = input.string('Top Right', 'Position', options=['Top Left', 'Top Right'], group=grp_dash)
+
+// ==========================================
+// 2. DATA STRUCTURES
+// ==========================================
+type pivot
+    float currentLevel = na
+    float lastLevel    = na
+    bool  crossed      = false
+    int   barTime      = time
+    int   barIndex     = bar_index
+
+type trailingExtremes
+    float top    = na
+    float bottom = na
+    int   lastTopTime = na
+    int   lastBottomTime = na
+    int   barTime = na
+    int   barIndex = na
+
+var pivot swingHigh           = pivot.new()
+var pivot swingLow            = pivot.new()
+var trailingExtremes trailing = trailingExtremes.new()
+var int trendBias             = 0 // 1 for Bullish, -1 for Bearish
+
+// ==========================================
+// 3. CORE LOGIC FUNCTIONS (LuxAlgo Base)
+// ==========================================
+leg(int size) =>
+    var int l = 0
+    bool newLegHigh = high[size] > ta.highest(size)
+    bool newLegLow  = low[size]  < ta.lowest(size)
+    if newLegHigh
+        l := 0
+    else if newLegLow
+        l := 1
+    l
+
+getCurrentStructure(int size) =>
+    int currentLeg = leg(size)
+    bool newPivot  = ta.change(currentLeg) != 0
+    bool pivotLow  = ta.change(currentLeg) == 1
+    bool pivotHigh = ta.change(currentLeg) == -1
+    
+    if newPivot
+        if pivotLow
+            swingLow.lastLevel    := swingLow.currentLevel
+            swingLow.currentLevel := low[size]
+            swingLow.crossed      := false
+            swingLow.barTime      := time[size]
+            swingLow.barIndex     := bar_index[size]
+            
+            trailing.bottom  := swingLow.currentLevel
+            trailing.lastBottomTime := swingLow.barTime
+            trailing.barTime := swingLow.barTime
+            trailing.barIndex:= swingLow.barIndex
+        else if pivotHigh
+            swingHigh.lastLevel    := swingHigh.currentLevel
+            swingHigh.currentLevel := high[size]
+            swingHigh.crossed      := false
+            swingHigh.barTime      := time[size]
+            swingHigh.barIndex     := bar_index[size]
+            
+            trailing.top     := swingHigh.currentLevel
+            trailing.lastTopTime := swingHigh.barTime
+            trailing.barTime := swingHigh.barTime
+            trailing.barIndex:= swingHigh.barIndex
+
+updateTrailingExtremes() =>
+    trailing.top            := math.max(high, trailing.top)
+    trailing.lastTopTime    := trailing.top == high ? time : trailing.lastTopTime
+    trailing.bottom         := math.min(low, trailing.bottom)
+    trailing.lastBottomTime := trailing.bottom == low ? time : trailing.lastBottomTime
+
+// ==========================================
+// 4. EXECUTION & DRAWING (GLOBAL SCOPE)
+// ==========================================
+getCurrentStructure(swingLength)
+updateTrailingExtremes()
+
+var line highLine = na
+var line lowLine  = na
+int rightBarTime = last_bar_time + 20 * (time - time[1])
+
+if na(highLine)
+    highLine := line.new(trailing.lastTopTime, trailing.top, rightBarTime, trailing.top, xloc=xloc.bar_time, color=swingHighColor, style=line.style_dashed, width=1)
+else
+    highLine.set_first_point(chart.point.new(trailing.lastTopTime, na, trailing.top))
+    highLine.set_second_point(chart.point.new(rightBarTime, na, trailing.top))
+
+if na(lowLine)
+    lowLine := line.new(trailing.lastBottomTime, trailing.bottom, rightBarTime, trailing.bottom, xloc=xloc.bar_time, color=swingLowColor, style=line.style_dashed, width=1)
+else
+    lowLine.set_first_point(chart.point.new(trailing.lastBottomTime, na, trailing.bottom))
+    lowLine.set_second_point(chart.point.new(rightBarTime, na, trailing.bottom))
+
+float upperWick = high - math.max(close, open)
+float lowerWick = math.min(close, open) - low
+bool bullishBar = upperWick > lowerWick
+bool bearishBar = upperWick < lowerWick
+
+bool crossUp   = ta.crossover(close, swingHigh.currentLevel)
+bool crossDown = ta.crossunder(close, swingLow.currentLevel)
+
+if crossUp and not swingHigh.crossed
+    swingHigh.crossed := true
+    trendBias := 1
+    line.new(swingHigh.barTime, swingHigh.currentLevel, time, swingHigh.currentLevel, xloc=xloc.bar_time, color=bullBreakColor, style=line.style_solid, width=1)
+    int midIdxHigh = math.round(0.5 * (swingHigh.barIndex + bar_index))
+    label.new(midIdxHigh, swingHigh.currentLevel, 'Break', xloc=xloc.bar_index, color=color(na), textcolor=bullBreakColor, style=label.style_label_down, size=size.small)
+
+if crossDown and not swingLow.crossed
+    swingLow.crossed := true
+    trendBias := -1
+    line.new(swingLow.barTime, swingLow.currentLevel, time, swingLow.currentLevel, xloc=xloc.bar_time, color=bearBreakColor, style=line.style_solid, width=1)
+    int midIdxLow = math.round(0.5 * (swingLow.barIndex + bar_index))
+    label.new(midIdxLow, swingLow.currentLevel, 'Break', xloc=xloc.bar_index, color=color(na), textcolor=bearBreakColor, style=label.style_label_up, size=size.small)
+
+var box zn1Box = na
+var label zn1Lbl = na
+var label zn1LblTop = na
+var label zn1LblBot = na
+
+var box zn2Box = na
+var label zn2Lbl = na
+var label zn2LblTop = na
+var label zn2LblBot = na
+
+// ==========================================
+// 5. FRESHNESS TRACKING VARIABLES
+// ==========================================
+var int   zn1FormationBar       = na
+var bool  zn1HasBeenUsed        = false
+
+var int   zn2FormationBar       = na
+var bool  zn2HasBeenUsed        = false
+
+// Track previous structure to detect when a new zone is formed
+var int   prevSwingHighBarTime  = na
+var int   prevSwingLowBarTime   = na
+var int   prevTrendBias         = 0
+
+if showZones and not na(trailing.top) and not na(trailing.bottom)
+    float priceRange = trailing.top - trailing.bottom
+    
+    float z1High = 0.525 * trailing.top + 0.475 * trailing.bottom
+    float z1Low  = 0.525 * trailing.bottom + 0.475 * trailing.top
+    
+    float z2High = 0.0
+    float z2Low  = 0.0
+    if trendBias == 1
+        z2High := trailing.top - 0.618 * priceRange
+        z2Low  := trailing.top - 0.786 * priceRange
+    else if trendBias == -1
+        z2High := trailing.bottom + 0.786 * priceRange
+        z2Low  := trailing.bottom + 0.618 * priceRange
+    else
+        z2High := trailing.top - 0.618 * priceRange
+        z2Low  := trailing.top - 0.786 * priceRange
+
+    // --- ZONE DRAWING ALIGNMENT FIX (v1.0.1.2) ---
+    int zn1LeftBarTime = math.min(swingHigh.barTime, swingLow.barTime)
+    int zn2LeftBarTime = trendBias == 1 ? swingLow.barTime : trendBias == -1 ? swingHigh.barTime : math.min(swingHigh.barTime, swingLow.barTime)
+    
+    int midIdx       = math.round(0.5 * (swingHigh.barIndex + bar_index))
+    
+    color currentZoneColor = trendBias == 1 ? znBullColor : trendBias == -1 ? znBearColor : znNeutralColor
+    string zonePrefix = trendBias == 1 ? "Buy " : trendBias == -1 ? "Sell " : ""
+    color labelTextColor = trendBias == 1 ? bullBreakColor : trendBias == -1 ? bearBreakColor : color.white
+
+    // ==========================================
+    // 5b. STRUCTURE CHANGE DETECTION & FRESHNESS RESET
+    // ==========================================
+    // When new swing points form or trend bias flips, we have a NEW zone.
+    // It must start as Fresh, not inherit the old zone's Used state.
+    bool newStructureFormed = (swingHigh.barTime != prevSwingHighBarTime) or 
+                              (swingLow.barTime != prevSwingLowBarTime) or 
+                              (trendBias != prevTrendBias)
+
+    if newStructureFormed
+        // Reset ZN 1 freshness for the new zone
+        zn1FormationBar := na
+        zn1HasBeenUsed := false
+        
+        // Reset ZN 2 freshness for the new zone
+        zn2FormationBar := na
+        zn2HasBeenUsed := false
+        
+        // Update trackers so we don't reset again until next structure change
+        prevSwingHighBarTime := swingHigh.barTime
+        prevSwingLowBarTime := swingLow.barTime
+        prevTrendBias := trendBias
+
+    // ==========================================
+    // 6. FRESHNESS LOGIC IMPLEMENTATION (v1.0.1.7)
+    // ==========================================
+    // DYNAMIC ZONES: Freshness checks against CURRENT zone levels
+    // Zone boundaries move with new swings, freshness follows
+    
+    // --- ZN 1 Freshness Tracking ---
+    if na(zn1FormationBar)
+        zn1FormationBar := bar_index
+        zn1HasBeenUsed := false
+    else if bar_index > zn1FormationBar and not zn1HasBeenUsed
+        bool zn1UsedByClose = false
+        bool zn1UsedByWickUPB = false
+        bool zn1UsedByWickLWB = false
+        
+        if trendBias == 1 // Buy Zone (Green)
+            // Check against CURRENT zone levels
+            zn1UsedByClose := close <= z1High and close >= z1Low
+            zn1UsedByWickUPB := low <= z1High
+            zn1UsedByWickLWB := low <= z1Low
+        else if trendBias == -1 // Sell Zone (Red)
+            zn1UsedByClose := close >= z1Low and close <= z1High
+            zn1UsedByWickUPB := high >= z1High
+            zn1UsedByWickLWB := high >= z1Low
+            
+        if zn1UsedByClose or zn1UsedByWickUPB or zn1UsedByWickLWB
+            zn1HasBeenUsed := true
+
+    // --- ZN 2 Freshness Tracking ---
+    if na(zn2FormationBar)
+        zn2FormationBar := bar_index
+        zn2HasBeenUsed := false
+    else if bar_index > zn2FormationBar and not zn2HasBeenUsed
+        bool zn2UsedByClose = false
+        bool zn2UsedByWickUPB = false
+        bool zn2UsedByWickLWB = false
+        
+        if trendBias == 1 // Buy Zone (Green)
+            // Check against CURRENT zone levels
+            zn2UsedByClose := close <= z2High and close >= z2Low
+            zn2UsedByWickUPB := low <= z2High
+            zn2UsedByWickLWB := low <= z2Low
+        else if trendBias == -1 // Sell Zone (Red)
+            zn2UsedByClose := close >= z2Low and close <= z2High
+            zn2UsedByWickUPB := high >= z2High
+            zn2UsedByWickLWB := high >= z2Low
+            
+        if zn2UsedByClose or zn2UsedByWickUPB or zn2UsedByWickLWB
+            zn2HasBeenUsed := true
+
+    // ==========================================
+    // DRAW ZN 1 (Equilibrium Zone) - DYNAMIC
+    // ==========================================
+    if na(zn1Box)
+        zn1Box := box.new(zn1LeftBarTime, z1High, rightBarTime, z1Low, xloc=xloc.bar_time, bgcolor=currentZoneColor, border_color=color.new(currentZoneColor, 50))
+        zn1Lbl := label.new(midIdx, math.avg(z1High, z1Low), zonePrefix + 'ZN 1', xloc=xloc.bar_index, color=color(na), textcolor=labelTextColor, style=label.style_label_center, size=size.small)
+        zn1LblTop := label.new(rightBarTime, z1High, "[UPB] " + str.tostring(z1High, format.mintick), xloc=xloc.bar_time, color=color(na), textcolor=labelTextColor, style=label.style_label_left, size=size.small)
+        zn1LblBot := label.new(rightBarTime, z1Low, "[LWB] " + str.tostring(z1Low, format.mintick), xloc=xloc.bar_time, color=color(na), textcolor=labelTextColor, style=label.style_label_left, size=size.small)
+    else
+        // Update box dynamically with current levels
+        zn1Box.set_left(zn1LeftBarTime)
+        zn1Box.set_right(rightBarTime)
+        zn1Box.set_top(z1High)
+        zn1Box.set_bottom(z1Low)
+        zn1Box.set_bgcolor(currentZoneColor)
+        zn1Box.set_border_color(color.new(currentZoneColor, 50))
+        zn1Lbl.set_xy(midIdx, math.avg(z1High, z1Low))
+        zn1Lbl.set_text(zonePrefix + 'ZN 1')
+        zn1Lbl.set_textcolor(labelTextColor)
+        zn1LblTop.set_xy(rightBarTime, z1High)
+        zn1LblTop.set_text("[UPB] " + str.tostring(z1High, format.mintick))
+        zn1LblTop.set_textcolor(labelTextColor)
+        zn1LblBot.set_xy(rightBarTime, z1Low)
+        zn1LblBot.set_text("[LWB] " + str.tostring(z1Low, format.mintick))
+        zn1LblBot.set_textcolor(labelTextColor)
+
+    // ==========================================
+    // DRAW ZN 2 (Fibonacci Zone) - DYNAMIC
+    // ==========================================
+    if na(zn2Box)
+        zn2Box := box.new(zn2LeftBarTime, z2High, rightBarTime, z2Low, xloc=xloc.bar_time, bgcolor=currentZoneColor, border_color=color.new(currentZoneColor, 50))
+        zn2Lbl := label.new(midIdx, math.avg(z2High, z2Low), zonePrefix + 'ZN 2', xloc=xloc.bar_index, color=color(na), textcolor=labelTextColor, style=label.style_label_center, size=size.small)
+        zn2LblTop := label.new(rightBarTime, z2High, "[UPB] " + str.tostring(z2High, format.mintick), xloc=xloc.bar_time, color=color(na), textcolor=labelTextColor, style=label.style_label_left, size=size.small)
+        zn2LblBot := label.new(rightBarTime, z2Low, "[LWB] " + str.tostring(z2Low, format.mintick), xloc=xloc.bar_time, color=color(na), textcolor=labelTextColor, style=label.style_label_left, size=size.small)
+    else
+        // Update box dynamically with current levels
+        zn2Box.set_left(zn2LeftBarTime)
+        zn2Box.set_right(rightBarTime)
+        zn2Box.set_top(z2High)
+        zn2Box.set_bottom(z2Low)
+        zn2Box.set_bgcolor(currentZoneColor)
+        zn2Box.set_border_color(color.new(currentZoneColor, 50))
+        zn2Lbl.set_xy(midIdx, math.avg(z2High, z2Low))
+        zn2Lbl.set_text(zonePrefix + 'ZN 2')
+        zn2Lbl.set_textcolor(labelTextColor)
+        zn2LblTop.set_xy(rightBarTime, z2High)
+        zn2LblTop.set_text("[UPB] " + str.tostring(z2High, format.mintick))
+        zn2LblTop.set_textcolor(labelTextColor)
+        zn2LblBot.set_xy(rightBarTime, z2Low)
+        zn2LblBot.set_text("[LWB] " + str.tostring(z2Low, format.mintick))
+        zn2LblBot.set_textcolor(labelTextColor)
+
+// ==========================================
+// 7. DASHBOARD
+// ==========================================
+var table dashTable = table.new(position=dashPosition == 'Top Right' ? position.top_right : position.top_left, columns=3, rows=15, bgcolor=color.new(#131722, 10), frame_color=color.gray, frame_width=1, border_width=1, border_color=color.new(#363a45, 50))
+
+color c_green = #089981
+color c_red   = #F23645
+color c_gray  = #878b94
+color c_white = #FFFFFF
+color c_yellow= #FFA000
+color c_bg_header = color.new(#1E222D, 0)
+
+if showDashboard and barstate.islast
+    table.cell(dashTable, 0, 0, "Zone A1", text_color=c_white, bgcolor=c_bg_header, text_size=size.small)
+    table.cell(dashTable, 1, 0, "Buy / Long", text_color=c_green, bgcolor=c_bg_header, text_size=size.small)
+    table.cell(dashTable, 2, 0, "Sell / Short", text_color=c_red, bgcolor=c_bg_header, text_size=size.small)
+    
+    table.cell(dashTable, 0, 1, "Trend EMA", text_color=c_white, text_size=size.small)
+    table.cell(dashTable, 1, 1, "Allow ✓", text_color=c_green, text_size=size.small)
+    table.cell(dashTable, 2, 1, "Allow ✓", text_color=c_green, text_size=size.small)
+    
+    table.cell(dashTable, 0, 2, "Swing Bias", text_color=c_white, text_size=size.small)
+    table.cell(dashTable, 1, 2, trendBias == 1 ? "Bullish ✓" : "Bearish ✗", text_color=trendBias == 1 ? c_green : c_red, text_size=size.small)
+    table.cell(dashTable, 2, 2, trendBias == -1 ? "Bearish ✓" : "Bullish ✗", text_color=trendBias == -1 ? c_red : c_green, text_size=size.small)
+    
+    table.cell(dashTable, 0, 3, "--- Zone 1 ---", text_color=c_gray, text_size=size.small)
+    table.cell(dashTable, 1, 3, "Buy / Long", text_color=c_green, text_size=size.small)
+    table.cell(dashTable, 2, 3, "Sell / Short", text_color=c_red, text_size=size.small)
+    
+    table.cell(dashTable, 0, 4, "ZN 1 Formed", text_color=c_white, text_size=size.small)
+    table.cell(dashTable, 1, 4, "Ok ✓", text_color=c_green, text_size=size.small)
+    table.cell(dashTable, 2, 4, "Ok ✓", text_color=c_green, text_size=size.small)
+    
+    table.cell(dashTable, 0, 5, "Waiting Entry for ZN 1", text_color=c_white, text_size=size.small)
+    table.cell(dashTable, 1, 5, "Waiting ✓", text_color=c_green, text_size=size.small)
+    table.cell(dashTable, 2, 5, "Done/No ✗", text_color=c_red, text_size=size.small)
+    
+    table.cell(dashTable, 0, 6, "ZN 1 Validity", text_color=c_white, text_size=size.small)
+    table.cell(dashTable, 1, 6, "Valid", text_color=c_green, text_size=size.small)
+    table.cell(dashTable, 2, 6, "Invalid", text_color=c_red, text_size=size.small)
+    
+    table.cell(dashTable, 0, 7, "ZN 1 Freshness", text_color=c_white, text_size=size.small)
+    string zn1BuyFreshness = trendBias == 1 ? (not zn1HasBeenUsed ? " Fresh" : " Used") : " Invalid"
+    string zn1SellFreshness = trendBias == -1 ? (not zn1HasBeenUsed ? " Fresh" : " Used") : " Invalid"
+    table.cell(dashTable, 1, 7, zn1BuyFreshness, text_color=trendBias == 1 ? (not zn1HasBeenUsed ? c_green : c_yellow) : c_red, text_size=size.small)
+    table.cell(dashTable, 2, 7, zn1SellFreshness, text_color=trendBias == -1 ? (not zn1HasBeenUsed ? c_green : c_yellow) : c_red, text_size=size.small)
+    
+    table.cell(dashTable, 0, 8, "--- Zone 2 ---", text_color=c_gray, text_size=size.small)
+    table.cell(dashTable, 1, 8, "Buy / Long", text_color=c_green, text_size=size.small)
+    table.cell(dashTable, 2, 8, "Sell / Short", text_color=c_red, text_size=size.small)
+    
+    table.cell(dashTable, 0, 9, "ZN 2 Formed", text_color=c_white, text_size=size.small)
+    table.cell(dashTable, 1, 9, "Ok ✓", text_color=c_green, text_size=size.small)
+    table.cell(dashTable, 2, 9, "Ok ✓", text_color=c_green, text_size=size.small)
+    
+    table.cell(dashTable, 0, 10, "Waiting Entry for ZN 2", text_color=c_white, text_size=size.small)
+    table.cell(dashTable, 1, 10, "Waiting ✓", text_color=c_green, text_size=size.small)
+    table.cell(dashTable, 2, 10, "Done/No ", text_color=c_red, text_size=size.small)
+    
+    table.cell(dashTable, 0, 11, "ZN 2 Validity", text_color=c_white, text_size=size.small)
+    table.cell(dashTable, 1, 11, "Valid", text_color=c_green, text_size=size.small)
+    table.cell(dashTable, 2, 11, "Invalid", text_color=c_red, text_size=size.small)
+    
+    table.cell(dashTable, 0, 12, "ZN 2 Freshness", text_color=c_white, text_size=size.small)
+    string zn2BuyFreshness = trendBias == 1 ? (not zn2HasBeenUsed ? " Fresh" : " Used") : " Invalid"
+    string zn2SellFreshness = trendBias == -1 ? (not zn2HasBeenUsed ? " Fresh" : " Used") : " Invalid"
+    table.cell(dashTable, 1, 12, zn2BuyFreshness, text_color=trendBias == 1 ? (not zn2HasBeenUsed ? c_green : c_yellow) : c_red, text_size=size.small)
+    table.cell(dashTable, 2, 12, zn2SellFreshness, text_color=trendBias == -1 ? (not zn2HasBeenUsed ? c_green : c_yellow) : c_red, text_size=size.small)
+    
+    table.cell(dashTable, 0, 13, "ACTION", text_color=c_white, bgcolor=c_bg_header, text_size=size.small)
+    table.cell(dashTable, 1, 13, "STATUS", text_color=c_white, bgcolor=c_bg_header, text_size=size.small)
+    table.cell(dashTable, 2, 13, "CONDITION", text_color=c_white, bgcolor=c_bg_header, text_size=size.small)
+    
+    string actionText = trendBias == 1 ? " BUY" : trendBias == -1 ? " SELL" : " WAIT"
+    color actionColor = trendBias == 1 ? c_green : trendBias == -1 ? c_red : c_gray
+    table.cell(dashTable, 0, 14, actionText, text_color=c_white, bgcolor=actionColor, text_size=size.small)
+    table.cell(dashTable, 1, 14, "READY ENTRY", text_color=c_white, bgcolor=c_green, text_size=size.small)
+    table.cell(dashTable, 2, 14, "RETEST ZONE 1 & 2", text_color=c_white, bgcolor=c_green, text_size=size.small)
