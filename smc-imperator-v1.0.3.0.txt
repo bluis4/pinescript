@@ -1,0 +1,576 @@
+// =============================================================================
+// SMC-IMPERATOR - Smart Money Concepts Indicator
+// =============================================================================
+// This work is derived from LuxAlgo Smart Money Concepts (CC BY-NC-SA 4.0)
+// © LuxAlgo | Modified and maintained by Bluefish
+//
+// Indicator Name: SMC-Imperator
+// Version: 1.0.3.0
+// Written by: Qwen3.7-Plus
+// Owner: Bluefish
+//
+// REVISION NOTES v1.0.3.0:
+// - Added Trend Filter subsection (EMA, RSI, Stochastic) with MTF support
+// - Added RSI and Stoch Filter rows to Dashboard (shows Disabled if filter is off)
+// - Restructured Parameters into clean subsections (Zones, Dashboard, Entry, TP/SL)
+// - Hardcoded Swing, BoS, and Zone colors (removed from user settings panel)
+// - Implemented Action Row Overrides:
+//   - "✖ DENIED" (Red) if Trend Filter blocks the current bias
+//   - "⏱ WAIT" (Yellow) if both zones for the current bias are Used
+// =============================================================================
+//@version=5
+indicator('SMC-Imperator', overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// =============================================================================
+// 1. INPUTS (SETTING PARAMETERS)
+// =============================================================================
+// --- Trend Filter ---
+grp_trend = "Trend Filter"
+enableTrendFilter = input.bool(false, 'Enable Trend Filter', group=grp_trend, tooltip='Master switch for EMA, RSI, and Stochastic filters.')
+showEmaOnChart    = input.bool(false, 'Show EMA on Chart', group=grp_trend)
+emaLength         = input.int(200, 'EMA Length', minval=1, group=grp_trend, inline='ema')
+emaTimeframe      = input.timeframe('D', 'EMA Timeframe', group=grp_trend, inline='ema')
+
+rsiLength         = input.int(14, 'RSI Length', minval=1, group=grp_trend, inline='rsi')
+rsiTimeframe      = input.timeframe('', 'RSI Timeframe', group=grp_trend, inline='rsi', tooltip='Leave empty for current chart timeframe')
+
+stochK_len        = input.int(14, 'Stoch %K', minval=1, group=grp_trend, inline='stoch')
+stochD_len        = input.int(3, 'Stoch %D', minval=1, group=grp_trend, inline='stoch')
+stochSmooth       = input.int(3, 'Smooth', minval=1, group=grp_trend, inline='stoch')
+stochTimeframe    = input.timeframe('', 'Stoch Timeframe', group=grp_trend, tooltip='Leave empty for current chart timeframe')
+
+// --- Zones ---
+grp_zones = "Zones"
+showZones       = input.bool(true, 'Show Zones', group=grp_zones)
+
+// --- Dashboard ---
+grp_dash = "Dashboard"
+showDashboard   = input.bool(true, 'Show Dashboard', group=grp_dash)
+dashPosition    = input.string('Top Right', 'Position', options=['Top Left', 'Top Right'], group=grp_dash)
+showFilterDetails = input.bool(true, 'Show Trend Filter Details (RSI/Stoch)', group=grp_dash)
+
+// --- Entry Strategy (Placeholder for future updates) ---
+grp_entry = "Entry Strategy"
+// entryTrigger = input.string("Price Touch", "Entry Trigger", options=["Price Touch", "Candle Close"], group=grp_entry)
+
+// --- TP / SL / BE (Placeholder for future updates) ---
+grp_tp_sl = "TP / SL / BE"
+// tpRrRatio = input.float(2.0, "TP R:R Ratio", step=0.1, group=grp_tp_sl)
+
+// --- Hidden Parameters (Hardcoded - Logic kept, user inputs removed) ---
+int swingLength = 50
+color swingHighColor = color.new(#F23645, 0) // Red
+color swingLowColor  = color.new(#089981, 0) // Green
+
+color bullBreakColor = color.new(#089981, 0) // Green
+color bearBreakColor = color.new(#F23645, 0) // Red
+
+color znBullColor = color.new(#089981, 80)
+color znBearColor = color.new(#F23645, 80)
+color znNeutralColor = color.new(#878b94, 80)
+
+// =============================================================================
+// 2. DATA STRUCTURES
+// =============================================================================
+type pivot
+    float currentLevel = na
+    float lastLevel    = na
+    bool  crossed      = false
+    int   barTime      = time
+    int   barIndex     = bar_index
+
+type trailingExtremes
+    float top    = na
+    float bottom = na
+    int   lastTopTime = na
+    int   lastBottomTime = na
+    int   barTime = na
+    int   barIndex = na
+
+var pivot swingHigh           = pivot.new()
+var pivot swingLow            = pivot.new()
+var trailingExtremes trailing = trailingExtremes.new()
+var int trendBias             = 0
+
+// =============================================================================
+// 3. CORE LOGIC FUNCTIONS (LuxAlgo Base)
+// =============================================================================
+leg(int size) =>
+    var int l = 0
+    bool newLegHigh = high[size] > ta.highest(size)
+    bool newLegLow  = low[size]  < ta.lowest(size)
+    if newLegHigh
+        l := 0
+    else if newLegLow
+        l := 1
+    l
+
+getCurrentStructure(int size) =>
+    int currentLeg = leg(size)
+    bool newPivot  = ta.change(currentLeg) != 0
+    bool pivotLow  = ta.change(currentLeg) == 1
+    bool pivotHigh = ta.change(currentLeg) == -1
+    if newPivot
+        if pivotLow
+            swingLow.lastLevel    := swingLow.currentLevel
+            swingLow.currentLevel := low[size]
+            swingLow.crossed      := false
+            swingLow.barTime      := time[size]
+            swingLow.barIndex     := bar_index[size]
+            trailing.bottom  := swingLow.currentLevel
+            trailing.lastBottomTime := swingLow.barTime
+            trailing.barTime := swingLow.barTime
+            trailing.barIndex:= swingLow.barIndex
+        else if pivotHigh
+            swingHigh.lastLevel    := swingHigh.currentLevel
+            swingHigh.currentLevel := high[size]
+            swingHigh.crossed      := false
+            swingHigh.barTime      := time[size]
+            swingHigh.barIndex     := bar_index[size]
+            trailing.top     := swingHigh.currentLevel
+            trailing.lastTopTime := swingHigh.barTime
+            trailing.barTime := swingHigh.barTime
+            trailing.barIndex:= swingHigh.barIndex
+
+updateTrailingExtremes() =>
+    trailing.top            := math.max(high, trailing.top)
+    trailing.lastTopTime    := trailing.top == high ? time : trailing.lastTopTime
+    trailing.bottom         := math.min(low, trailing.bottom)
+    trailing.lastBottomTime := trailing.bottom == low ? time : trailing.lastBottomTime
+
+// =============================================================================
+// 4. SWING HIGH/LOW DETECTION & DRAWING
+// =============================================================================
+getCurrentStructure(swingLength)
+updateTrailingExtremes()
+
+var line highLine = na
+var line lowLine  = na
+int rightBarTime = last_bar_time + 20 * (time - time[1])
+
+if na(highLine)
+    highLine := line.new(trailing.lastTopTime, trailing.top, rightBarTime, trailing.top, xloc=xloc.bar_time, color=swingHighColor, style=line.style_dashed, width=1)
+else
+    highLine.set_first_point(chart.point.new(trailing.lastTopTime, na, trailing.top))
+    highLine.set_second_point(chart.point.new(rightBarTime, na, trailing.top))
+
+if na(lowLine)
+    lowLine := line.new(trailing.lastBottomTime, trailing.bottom, rightBarTime, trailing.bottom, xloc=xloc.bar_time, color=swingLowColor, style=line.style_dashed, width=1)
+else
+    lowLine.set_first_point(chart.point.new(trailing.lastBottomTime, na, trailing.bottom))
+    lowLine.set_second_point(chart.point.new(rightBarTime, na, trailing.bottom))
+
+// =============================================================================
+// 5. BREAK OF STRUCTURE (BoS/CHoCH) DETECTION
+// =============================================================================
+bool crossUp   = ta.crossover(close, swingHigh.currentLevel)
+bool crossDown = ta.crossunder(close, swingLow.currentLevel)
+
+if crossUp and not swingHigh.crossed
+    swingHigh.crossed := true
+    trendBias := 1
+    line.new(swingHigh.barTime, swingHigh.currentLevel, time, swingHigh.currentLevel, xloc=xloc.bar_time, color=bullBreakColor, style=line.style_solid, width=1)
+    int midIdxHigh = math.round(0.5 * (swingHigh.barIndex + bar_index))
+    label.new(midIdxHigh, swingHigh.currentLevel, 'Break', xloc=xloc.bar_index, color=color(na), textcolor=bullBreakColor, style=label.style_label_down, size=size.small)
+
+if crossDown and not swingLow.crossed
+    swingLow.crossed := true
+    trendBias := -1
+    line.new(swingLow.barTime, swingLow.currentLevel, time, swingLow.currentLevel, xloc=xloc.bar_time, color=bearBreakColor, style=line.style_solid, width=1)
+    int midIdxLow = math.round(0.5 * (swingLow.barIndex + bar_index))
+    label.new(midIdxLow, swingLow.currentLevel, 'Break', xloc=xloc.bar_index, color=color(na), textcolor=bearBreakColor, style=label.style_label_up, size=size.small)
+
+// =============================================================================
+// 6. GLOBAL VARIABLES FOR ZONES & FRESHNESS
+// =============================================================================
+var box zn1Box = na
+var label zn1Lbl = na
+var label zn1LblTop = na
+var label zn1LblBot = na
+var box zn2Box = na
+var label zn2Lbl = na
+var label zn2LblTop = na
+var label zn2LblBot = na
+
+var int   zn1FormationBar       = na
+var bool  zn1HasBeenUsed        = false
+var int   zn2FormationBar       = na
+var bool  zn2HasBeenUsed        = false
+
+var int   prevSwingHighBarTime  = na
+var int   prevSwingLowBarTime   = na
+var int   prevTrendBias         = 0
+
+float z1High = na
+float z1Low  = na
+float z2High = na
+float z2Low  = na
+
+// =============================================================================
+// 7. ZONE CALCULATIONS & DRAWING (ZN 1 & ZN 2)
+// =============================================================================
+if showZones and not na(trailing.top) and not na(trailing.bottom)
+    float priceRange = trailing.top - trailing.bottom
+    
+    z1High := 0.525 * trailing.top + 0.475 * trailing.bottom
+    z1Low  := 0.525 * trailing.bottom + 0.475 * trailing.top
+    
+    if trendBias == 1
+        z2High := trailing.top - 0.618 * priceRange
+        z2Low  := trailing.top - 0.786 * priceRange
+    else if trendBias == -1
+        z2High := trailing.bottom + 0.786 * priceRange
+        z2Low  := trailing.bottom + 0.618 * priceRange
+    else
+        z2High := trailing.top - 0.618 * priceRange
+        z2Low  := trailing.top - 0.786 * priceRange
+        
+    int zn1LeftBarTime = trendBias == 1 ? trailing.lastBottomTime : trendBias == -1 ? trailing.lastTopTime : math.min(trailing.lastTopTime, trailing.lastBottomTime)
+    int zn2LeftBarTime = trendBias == 1 ? trailing.lastBottomTime : trendBias == -1 ? trailing.lastTopTime : math.min(trailing.lastTopTime, trailing.lastBottomTime)
+    int zn1CenterTime = (zn1LeftBarTime + time) / 2
+    int zn2CenterTime = (zn2LeftBarTime + time) / 2
+    
+    color currentZoneColor = trendBias == 1 ? znBullColor : trendBias == -1 ? znBearColor : znNeutralColor
+    string zonePrefix = trendBias == 1 ? "Buy " : trendBias == -1 ? "Sell " : ""
+    color labelTextColor = trendBias == 1 ? bullBreakColor : trendBias == -1 ? bearBreakColor : color.white
+    
+    if na(zn1Box)
+        zn1Box := box.new(zn1LeftBarTime, z1High, rightBarTime, z1Low, xloc=xloc.bar_time, bgcolor=currentZoneColor, border_color=color.new(currentZoneColor, 50))
+        zn1Lbl := label.new(zn1CenterTime, math.avg(z1High, z1Low), zonePrefix + 'ZN 1', xloc=xloc.bar_time, color=color(na), textcolor=labelTextColor, style=label.style_label_center, size=size.small)
+        zn1LblTop := label.new(rightBarTime, z1High, "[UPB] " + str.tostring(z1High, format.mintick), xloc=xloc.bar_time, color=color(na), textcolor=labelTextColor, style=label.style_label_left, size=size.small)
+        zn1LblBot := label.new(rightBarTime, z1Low, "[LWB] " + str.tostring(z1Low, format.mintick), xloc=xloc.bar_time, color=color(na), textcolor=labelTextColor, style=label.style_label_left, size=size.small)
+    else
+        zn1Box.set_left(zn1LeftBarTime)
+        zn1Box.set_right(rightBarTime)
+        zn1Box.set_top(z1High)
+        zn1Box.set_bottom(z1Low)
+        zn1Box.set_bgcolor(currentZoneColor)
+        zn1Box.set_border_color(color.new(currentZoneColor, 50))
+        zn1Lbl.set_xy(zn1CenterTime, math.avg(z1High, z1Low))
+        zn1Lbl.set_text(zonePrefix + 'ZN 1')
+        zn1Lbl.set_textcolor(labelTextColor)
+        zn1LblTop.set_xy(rightBarTime, z1High)
+        zn1LblTop.set_text("[UPB] " + str.tostring(z1High, format.mintick))
+        zn1LblTop.set_textcolor(labelTextColor)
+        zn1LblBot.set_xy(rightBarTime, z1Low)
+        zn1LblBot.set_text("[LWB] " + str.tostring(z1Low, format.mintick))
+        zn1LblBot.set_textcolor(labelTextColor)
+        
+    if na(zn2Box)
+        zn2Box := box.new(zn2LeftBarTime, z2High, rightBarTime, z2Low, xloc=xloc.bar_time, bgcolor=currentZoneColor, border_color=color.new(currentZoneColor, 50))
+        zn2Lbl := label.new(zn2CenterTime, math.avg(z2High, z2Low), zonePrefix + 'ZN 2', xloc=xloc.bar_time, color=color(na), textcolor=labelTextColor, style=label.style_label_center, size=size.small)
+        zn2LblTop := label.new(rightBarTime, z2High, "[UPB] " + str.tostring(z2High, format.mintick), xloc=xloc.bar_time, color=color(na), textcolor=labelTextColor, style=label.style_label_left, size=size.small)
+        zn2LblBot := label.new(rightBarTime, z2Low, "[LWB] " + str.tostring(z2Low, format.mintick), xloc=xloc.bar_time, color=color(na), textcolor=labelTextColor, style=label.style_label_left, size=size.small)
+    else
+        zn2Box.set_left(zn2LeftBarTime)
+        zn2Box.set_right(rightBarTime)
+        zn2Box.set_top(z2High)
+        zn2Box.set_bottom(z2Low)
+        zn2Box.set_bgcolor(currentZoneColor)
+        zn2Box.set_border_color(color.new(currentZoneColor, 50))
+        zn2Lbl.set_xy(zn2CenterTime, math.avg(z2High, z2Low))
+        zn2Lbl.set_text(zonePrefix + 'ZN 2')
+        zn2Lbl.set_textcolor(labelTextColor)
+        zn2LblTop.set_xy(rightBarTime, z2High)
+        zn2LblTop.set_text("[UPB] " + str.tostring(z2High, format.mintick))
+        zn2LblTop.set_textcolor(labelTextColor)
+        zn2LblBot.set_xy(rightBarTime, z2Low)
+        zn2LblBot.set_text("[LWB] " + str.tostring(z2Low, format.mintick))
+        zn2LblBot.set_textcolor(labelTextColor)
+
+// =============================================================================
+// 8. FRESHNESS TRACKING LOGIC
+// =============================================================================
+var bool prevSwingHighCrossed = false
+var bool prevSwingLowCrossed = false
+bool newHighBreak = swingHigh.crossed and not prevSwingHighCrossed
+bool newLowBreak  = swingLow.crossed and not prevSwingLowCrossed
+bool newStructureFormed = (swingHigh.barTime != prevSwingHighBarTime) or
+                          (swingLow.barTime != prevSwingLowBarTime) or
+                          (trendBias != prevTrendBias) or
+                          newHighBreak or newLowBreak
+
+if newStructureFormed
+    zn1FormationBar := na
+    zn1HasBeenUsed := false
+    zn2FormationBar := na
+    zn2HasBeenUsed := false
+    prevSwingHighBarTime := swingHigh.barTime
+    prevSwingLowBarTime := swingLow.barTime
+    prevTrendBias := trendBias
+    prevSwingHighCrossed := swingHigh.crossed
+    prevSwingLowCrossed := swingLow.crossed
+
+if na(zn1FormationBar)
+    zn1FormationBar := bar_index
+    zn1HasBeenUsed := false
+else if bar_index > zn1FormationBar and not zn1HasBeenUsed
+    bool zn1Used = false
+    if not na(z1High) and not na(z1Low)
+        if trendBias == 1
+            zn1Used := (close <= z1High and close >= z1Low) or (low <= z1High) or (low <= z1Low)
+        else if trendBias == -1
+            zn1Used := (close >= z1Low and close <= z1High) or (high >= z1High) or (high >= z1Low)
+    if zn1Used
+        zn1HasBeenUsed := true
+
+if na(zn2FormationBar)
+    zn2FormationBar := bar_index
+    zn2HasBeenUsed := false
+else if bar_index > zn2FormationBar and not zn2HasBeenUsed
+    bool zn2Used = false
+    if not na(z2High) and not na(z2Low)
+        if trendBias == 1
+            zn2Used := (close <= z2High and close >= z2Low) or (low <= z2High) or (low <= z2Low)
+        else if trendBias == -1
+            zn2Used := (close >= z2Low and close <= z2High) or (high >= z2High) or (high >= z2Low)
+    if zn2Used
+        zn2HasBeenUsed := true
+
+// =============================================================================
+// 9. TREND FILTER LOGIC
+// =============================================================================
+// Fetch EMA from requested timeframe
+float emaValue = request.security(syminfo.tickerid, emaTimeframe, ta.ema(close, emaLength))
+plot(showEmaOnChart ? emaValue : na, color=color.orange, linewidth=2, title="Trend EMA")
+
+// Fetch RSI from requested timeframe
+float rsiValue = request.security(syminfo.tickerid, rsiTimeframe, ta.rsi(close, rsiLength))
+
+// Fetch Stochastic from requested timeframe
+float stochK_val = request.security(syminfo.tickerid, stochTimeframe, ta.stoch(close, high, low, stochK_len))
+float stochD_val = request.security(syminfo.tickerid, stochTimeframe, ta.sma(ta.stoch(close, high, low, stochK_len), stochD_len))
+
+// Calculate Filter States
+bool emaAllowBuy  = close > emaValue
+bool emaAllowSell = close < emaValue
+
+bool rsiAllowBuy  = rsiValue > 50
+bool rsiAllowSell = rsiValue < 50
+
+bool stochAllowBuy  = stochK_val > stochD_val
+bool stochAllowSell = stochK_val < stochD_val
+
+// Overall Confluence
+bool overallAllowBuy  = not enableTrendFilter ? true : (emaAllowBuy and rsiAllowBuy and stochAllowBuy)
+bool overallAllowSell = not enableTrendFilter ? true : (emaAllowSell and rsiAllowSell and stochAllowSell)
+
+// =============================================================================
+// 10. DASHBOARD DISPLAY
+// =============================================================================
+color c_green = #089981
+color c_red   = #F23645
+color c_gray  = #878b94
+color c_white = #FFFFFF
+color c_yellow= #FFA000
+color c_bg_header = color.new(#1E222D, 0)
+
+var table dashTable = table.new(position=dashPosition == 'Top Right' ? position.top_right : position.top_left, columns=3, rows=18, bgcolor=color.new(#131722, 10), frame_color=color.gray, frame_width=1, border_width=1, border_color=color.new(#363a45, 50))
+
+if showDashboard and barstate.islast
+    // Row 0: Header
+    table.cell(dashTable, 0, 0, "Zone A1", text_color=c_white, bgcolor=c_bg_header, text_size=size.small)
+    table.cell(dashTable, 1, 0, "Buy / Long", text_color=c_green, bgcolor=c_bg_header, text_size=size.small)
+    table.cell(dashTable, 2, 0, "Sell / Short", text_color=c_red, bgcolor=c_bg_header, text_size=size.small)
+    
+    // Row 1: Trend EMA
+    table.cell(dashTable, 0, 1, "Trend EMA", text_color=c_white, text_size=size.small)
+    string emaBuyText = enableTrendFilter ? (emaAllowBuy ? "Allow ✓" : "Deny ✗") : "Disabled"
+    string emaSellText = enableTrendFilter ? (emaAllowSell ? "Allow ✓" : "Deny ✗") : "Disabled"
+    color emaBuyColor = enableTrendFilter ? (emaAllowBuy ? c_green : c_red) : c_gray
+    color emaSellColor = enableTrendFilter ? (emaAllowSell ? c_green : c_red) : c_gray
+    table.cell(dashTable, 1, 1, emaBuyText, text_color=emaBuyColor, text_size=size.small)
+    table.cell(dashTable, 2, 1, emaSellText, text_color=emaSellColor, text_size=size.small)
+    
+    // Row 2: RSI
+    table.cell(dashTable, 0, 2, "RSI Filter", text_color=c_white, text_size=size.small)
+    string rsiBuyText = enableTrendFilter ? (rsiAllowBuy ? "Allow ✓" : "Deny ✗") : "Disabled"
+    string rsiSellText = enableTrendFilter ? (rsiAllowSell ? "Allow ✓" : "Deny ✗") : "Disabled"
+    color rsiBuyColor = enableTrendFilter ? (rsiAllowBuy ? c_green : c_red) : c_gray
+    color rsiSellColor = enableTrendFilter ? (rsiAllowSell ? c_green : c_red) : c_gray
+    table.cell(dashTable, 1, 2, rsiBuyText, text_color=rsiBuyColor, text_size=size.small)
+    table.cell(dashTable, 2, 2, rsiSellText, text_color=rsiSellColor, text_size=size.small)
+    
+    // Row 3: Stoch
+    table.cell(dashTable, 0, 3, "Stoch Filter", text_color=c_white, text_size=size.small)
+    string stochBuyText = enableTrendFilter ? (stochAllowBuy ? "Allow ✓" : "Deny ✗") : "Disabled"
+    string stochSellText = enableTrendFilter ? (stochAllowSell ? "Allow ✓" : "Deny ✗") : "Disabled"
+    color stochBuyColor = enableTrendFilter ? (stochAllowBuy ? c_green : c_red) : c_gray
+    color stochSellColor = enableTrendFilter ? (stochAllowSell ? c_green : c_red) : c_gray
+    table.cell(dashTable, 1, 3, stochBuyText, text_color=stochBuyColor, text_size=size.small)
+    table.cell(dashTable, 2, 3, stochSellText, text_color=stochSellColor, text_size=size.small)
+    
+    // Row 4: Swing Bias
+    table.cell(dashTable, 0, 4, "Swing Bias", text_color=c_white, text_size=size.small)
+    table.cell(dashTable, 1, 4, trendBias == 1 ? "Bullish ✓" : "Bearish ✗", text_color=trendBias == 1 ? c_green : c_red, text_size=size.small)
+    table.cell(dashTable, 2, 4, trendBias == -1 ? "Bearish ✓" : "Bullish ✗", text_color=trendBias == -1 ? c_red : c_green, text_size=size.small)
+    
+    // Row 5: --- Zone 1 ---
+    table.cell(dashTable, 0, 5, "--- Zone 1 ---", text_color=c_gray, text_size=size.small)
+    table.cell(dashTable, 1, 5, "Buy / Long", text_color=c_green, text_size=size.small)
+    table.cell(dashTable, 2, 5, "Sell / Short", text_color=c_red, text_size=size.small)
+    
+    // Row 6: ZN 1 Formed
+    table.cell(dashTable, 0, 6, "ZN 1 Formed", text_color=c_white, text_size=size.small)
+    string zn1BuyFormed = trendBias == 1 ? "OK ✓" : "Invalid ✗"
+    string zn1SellFormed = trendBias == -1 ? "OK ✓" : "Invalid ✗"
+    color zn1BuyFormedColor = trendBias == 1 ? c_green : c_red
+    color zn1SellFormedColor = trendBias == -1 ? c_green : c_red
+    table.cell(dashTable, 1, 6, zn1BuyFormed, text_color=zn1BuyFormedColor, text_size=size.small)
+    table.cell(dashTable, 2, 6, zn1SellFormed, text_color=zn1SellFormedColor, text_size=size.small)
+    
+    // Row 7: Waiting Entry for ZN 1
+    table.cell(dashTable, 0, 7, "Waiting Entry for ZN 1", text_color=c_white, text_size=size.small)
+    string zn1BuyWaiting = trendBias == 1 ? (not zn1HasBeenUsed ? "OK" : "NO") : "Invalid"
+    string zn1SellWaiting = trendBias == -1 ? (not zn1HasBeenUsed ? "OK" : "NO") : "Invalid"
+    color zn1BuyWaitingColor = trendBias == 1 ? (not zn1HasBeenUsed ? c_green : c_red) : c_red
+    color zn1SellWaitingColor = trendBias == -1 ? (not zn1HasBeenUsed ? c_green : c_red) : c_red
+    table.cell(dashTable, 1, 7, zn1BuyWaiting, text_color=zn1BuyWaitingColor, text_size=size.small)
+    table.cell(dashTable, 2, 7, zn1SellWaiting, text_color=zn1SellWaitingColor, text_size=size.small)
+    
+    // Row 8: ZN 1 Validity
+    table.cell(dashTable, 0, 8, "ZN 1 Validity", text_color=c_white, text_size=size.small)
+    string zn1BuyValidity = trendBias == 1 ? (not zn1HasBeenUsed ? "Valid" : "Invalid") : "Invalid"
+    string zn1SellValidity = trendBias == -1 ? (not zn1HasBeenUsed ? "Valid" : "Invalid") : "Invalid"
+    table.cell(dashTable, 1, 8, zn1BuyValidity, text_color=trendBias == 1 ? (not zn1HasBeenUsed ? c_green : c_red) : c_red, text_size=size.small)
+    table.cell(dashTable, 2, 8, zn1SellValidity, text_color=trendBias == -1 ? (not zn1HasBeenUsed ? c_green : c_red) : c_red, text_size=size.small)
+    
+    // Row 9: ZN 1 Freshness
+    table.cell(dashTable, 0, 9, "ZN 1 Freshness", text_color=c_white, text_size=size.small)
+    string zn1BuyFreshness = trendBias == 1 ? (not zn1HasBeenUsed ? " Fresh" : " Used") : " Invalid"
+    string zn1SellFreshness = trendBias == -1 ? (not zn1HasBeenUsed ? " Fresh" : " Used") : " Invalid"
+    table.cell(dashTable, 1, 9, zn1BuyFreshness, text_color=trendBias == 1 ? (not zn1HasBeenUsed ? c_green : c_yellow) : c_red, text_size=size.small)
+    table.cell(dashTable, 2, 9, zn1SellFreshness, text_color=trendBias == -1 ? (not zn1HasBeenUsed ? c_green : c_yellow) : c_red, text_size=size.small)
+    
+    // Row 10: --- Zone 2 ---
+    table.cell(dashTable, 0, 10, "--- Zone 2 ---", text_color=c_gray, text_size=size.small)
+    table.cell(dashTable, 1, 10, "Buy / Long", text_color=c_green, text_size=size.small)
+    table.cell(dashTable, 2, 10, "Sell / Short", text_color=c_red, text_size=size.small)
+    
+    // Row 11: ZN 2 Formed
+    table.cell(dashTable, 0, 11, "ZN 2 Formed", text_color=c_white, text_size=size.small)
+    string zn2BuyFormed = trendBias == 1 ? "OK ✓" : "Invalid ✗"
+    string zn2SellFormed = trendBias == -1 ? "OK ✓" : "Invalid ✗"
+    color zn2BuyFormedColor = trendBias == 1 ? c_green : c_red
+    color zn2SellFormedColor = trendBias == -1 ? c_green : c_red
+    table.cell(dashTable, 1, 11, zn2BuyFormed, text_color=zn2BuyFormedColor, text_size=size.small)
+    table.cell(dashTable, 2, 11, zn2SellFormed, text_color=zn2SellFormedColor, text_size=size.small)
+    
+    // Row 12: Waiting Entry for ZN 2
+    table.cell(dashTable, 0, 12, "Waiting Entry for ZN 2", text_color=c_white, text_size=size.small)
+    string zn2BuyWaiting = trendBias == 1 ? (not zn2HasBeenUsed ? "OK" : "NO") : "Invalid"
+    string zn2SellWaiting = trendBias == -1 ? (not zn2HasBeenUsed ? "OK" : "NO") : "Invalid"
+    color zn2BuyWaitingColor = trendBias == 1 ? (not zn2HasBeenUsed ? c_green : c_red) : c_red
+    color zn2SellWaitingColor = trendBias == -1 ? (not zn2HasBeenUsed ? c_green : c_red) : c_red
+    table.cell(dashTable, 1, 12, zn2BuyWaiting, text_color=zn2BuyWaitingColor, text_size=size.small)
+    table.cell(dashTable, 2, 12, zn2SellWaiting, text_color=zn2SellWaitingColor, text_size=size.small)
+    
+    // Row 13: ZN 2 Validity
+    table.cell(dashTable, 0, 13, "ZN 2 Validity", text_color=c_white, text_size=size.small)
+    string zn2BuyValidity = trendBias == 1 ? (not zn2HasBeenUsed ? "Valid" : "Invalid") : "Invalid"
+    string zn2SellValidity = trendBias == -1 ? (not zn2HasBeenUsed ? "Valid" : "Invalid") : "Invalid"
+    table.cell(dashTable, 1, 13, zn2BuyValidity, text_color=trendBias == 1 ? (not zn2HasBeenUsed ? c_green : c_red) : c_red, text_size=size.small)
+    table.cell(dashTable, 2, 13, zn2SellValidity, text_color=trendBias == -1 ? (not zn2HasBeenUsed ? c_green : c_red) : c_red, text_size=size.small)
+    
+    // Row 14: ZN 2 Freshness
+    table.cell(dashTable, 0, 14, "ZN 2 Freshness", text_color=c_white, text_size=size.small)
+    string zn2BuyFreshness = trendBias == 1 ? (not zn2HasBeenUsed ? " Fresh" : " Used") : " Invalid"
+    string zn2SellFreshness = trendBias == -1 ? (not zn2HasBeenUsed ? " Fresh" : " Used") : " Invalid"
+    table.cell(dashTable, 1, 14, zn2BuyFreshness, text_color=trendBias == 1 ? (not zn2HasBeenUsed ? c_green : c_yellow) : c_red, text_size=size.small)
+    table.cell(dashTable, 2, 14, zn2SellFreshness, text_color=trendBias == -1 ? (not zn2HasBeenUsed ? c_green : c_yellow) : c_red, text_size=size.small)
+    
+    // Row 15: SESSION
+    int h = hour(time, "GMT+0")
+    string sessionName = "Off-Hours"
+    string sessionQuality = "Low Volatility"
+    color sessionNameColor = c_gray
+    color sessionQualityColor = c_gray
+    
+    if h >= 0 and h < 7
+        sessionName := "Asia"
+        sessionQuality := "Low Volatility"
+        sessionNameColor := c_yellow
+        sessionQualityColor := c_yellow
+    else if h >= 7 and h < 8
+        sessionName := "Asia / Europe"
+        sessionQuality := "Overlap (Building)"
+        sessionNameColor := c_yellow
+        sessionQualityColor := c_yellow
+    else if h >= 8 and h < 12
+        sessionName := "Europe"
+        sessionQuality := "High Volatility"
+        sessionNameColor := c_green
+        sessionQualityColor := c_green
+    else if h >= 12 and h < 16
+        sessionName := "Europe / NY"
+        sessionQuality := "Killzone Overlap"
+        sessionNameColor := c_green
+        sessionQualityColor := c_green
+    else if h >= 16 and h < 21
+        sessionName := "New York"
+        sessionQuality := "High Volatility"
+        sessionNameColor := c_green
+        sessionQualityColor := c_green
+        
+    table.cell(dashTable, 0, 15, "SESSION", text_color=c_white, bgcolor=c_bg_header, text_size=size.small)
+    table.cell(dashTable, 1, 15, sessionName, text_color=sessionNameColor, text_size=size.small)
+    table.cell(dashTable, 2, 15, sessionQuality, text_color=sessionQualityColor, text_size=size.small)
+    
+    // Row 16: ACTION Header
+    table.cell(dashTable, 0, 16, "ACTION", text_color=c_white, bgcolor=c_bg_header, text_size=size.small)
+    table.cell(dashTable, 1, 16, "STATUS", text_color=c_white, bgcolor=c_bg_header, text_size=size.small)
+    table.cell(dashTable, 2, 16, "CONDITION", text_color=c_white, bgcolor=c_bg_header, text_size=size.small)
+    
+    // Row 17: ACTION Values
+    bool zn1FreshForBias = (trendBias == 1 and not zn1HasBeenUsed) or (trendBias == -1 and not zn1HasBeenUsed)
+    bool zn2FreshForBias = (trendBias == 1 and not zn2HasBeenUsed) or (trendBias == -1 and not zn2HasBeenUsed)
+    bool bothZonesUsed = (not zn1FreshForBias) and (not zn2FreshForBias)
+    bool trendDeniesBias = (trendBias == 1 and not overallAllowBuy) or (trendBias == -1 and not overallAllowSell)
+    
+    string actionText = ""
+    color actionColor = c_gray
+    
+    if trendBias == 0
+        actionText := "✖ WAIT"
+    else if trendDeniesBias
+        actionText := "✖ DENIED"
+        actionColor := c_red
+    else if bothZonesUsed
+        actionText := "⏱ WAIT"
+        actionColor := c_yellow
+    else if trendBias == 1
+        actionText := "► BUY"
+        actionColor := c_green
+    else if trendBias == -1
+        actionText := "► SELL"
+        actionColor := c_red
+        
+    string statusText = ""
+    color statusColor = c_gray
+    string conditionText = ""
+    color conditionColor = c_gray
+    
+    if trendBias == 0
+        statusText := "WAITING"
+        statusColor := c_gray
+        conditionText := "NO STRUCTURE"
+        conditionColor := c_gray
+    else if trendDeniesBias
+        statusText := "DENIED"
+        statusColor := c_red
+        conditionText := "TREND FILTER"
+        conditionColor := c_red
+    else if bothZonesUsed
+        statusText := "WAITING"
+        statusColor := c_yellow
+        conditionText := "WAIT FOR NEW BOS"
+        conditionColor := c_yellow
+    else
+        statusText := "READY ENTRY"
+        statusColor := c_green
+        conditionText := "RETEST ZONE 1 & 2"
+        conditionColor := c_green
+        
+    table.cell(dashTable, 0, 17, actionText, text_color=c_white, bgcolor=actionColor, text_size=size.small)
+    table.cell(dashTable, 1, 17, statusText, text_color=statusColor, text_size=size.small)
+    table.cell(dashTable, 2, 17, conditionText, text_color=conditionColor, text_size=size.small)
