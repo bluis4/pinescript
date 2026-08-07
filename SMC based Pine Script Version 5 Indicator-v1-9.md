@@ -148,9 +148,9 @@ This is the part of the indicator parameter setting. This parameter setting will
 4. Entry Strategy \[Todo]
 5. Take Profit - Stoploss - Breakeven \[Todo]
 6. Coming soon \[Hold]
-7. Hide Swing High/Low sub section (no need for user to tweak it)
-8. Disable Zones color setting from Zones sub section
-9. Remove break of structure sub section (no need for user to tweak it)
+7. Hide Swing High/Low sub section (no need for user to tweak it) [Todo]
+8. Disable Zones color setting from Zones sub section [Todo]
+9. Remove break of structure sub section (no need for user to tweak it) [Todo]
 
 
 
